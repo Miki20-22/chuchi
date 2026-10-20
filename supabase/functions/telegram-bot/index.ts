@@ -55,6 +55,9 @@ Mögliche Actions:
 - {"type":"save_recipe","recipe":Recipe}        neues Rezept in die Sammlung
 - {"type":"rate","recipe_ref":"R3","stars":1-5}   Rezept bewerten (z. B. "das Curry war super, 5 Sterne")
 - {"type":"note","recipe_ref":"R3","text":string}  Notiz zu einem Rezept (z. B. "beim Curry nächstes Mal weniger Salz")
+- {"type":"todo_add","items":[{"title":string,"due":"YYYY-MM-DD"|null}]}   Aufgabe auf die To-do-Liste (nicht Einkauf!)
+- {"type":"todo_done","titles":string[]}        Aufgaben erledigt
+- {"type":"todo_remove","titles":string[]}      Aufgaben löschen
 - {"type":"pantry_add","names":string[]}        gehört zum Vorrat (immer da, wird bei Rezepten nicht auf die Liste gesetzt)
 - {"type":"pantry_remove","names":string[]}     nicht mehr im Vorrat
 - {"type":"recurring_add","items":[{"name":string,"qty":number|null,"unit":string|null}],"weekday":1-7}  jede Woche automatisch auf die Liste (1 = Montag … 7 = Sonntag)
@@ -63,6 +66,7 @@ Regeln:
 - Führe nur Actions aus, die der Nutzer wirklich will. Bei "schlag mir was vor" nur Vorschläge im reply, ohne plan-Action, und frag, ob du einplanen sollst. Bestätigt der Nutzer später ("ja", "mach so"), plane gemäss Verlauf.
 - Bevorzuge gut bewertete Rezepte (★4–5) und solche, die länger nicht gekocht wurden ("zuletzt"). Was in den letzten 14 Tagen schon dran war, planst du nur auf Wunsch. Rezepte mit ★1–2 schlägst du nicht vor.
 - Bei Fragen nach Kalorien nutze die kcal-Angaben (pro Portion).
+- Aufgaben, die nichts mit Einkaufen zu tun haben ("Velo flicken", "Mama anrufen", "To-do: …", "erinnere mich an …"), gehören auf die To-do-Liste, nicht auf die Einkaufsliste.
 - "X ist leer / aus / fertig" heisst: X mit add_items auf die Liste setzen (auch wenn X im Vorrat ist).
 - Beachte die Notizen zu Rezepten, wenn du sie vorschlägst oder beschreibst.
 - Beim Wochenplan: nutze zuerst passende Rezepte aus der Sammlung (recipe_ref), ergänze bei Bedarf eigene Ideen als new_recipe mit vollständigen Zutaten und Schritten. Achte auf Abwechslung und Saison. Standard sind 2 Portionen, ausser der Nutzer sagt etwas anderes.
@@ -81,6 +85,7 @@ async function agent(chat_id: number, text: string) {
     `Einkaufsliste (offen): ${s.items.filter((i: any) => !i.checked).map((i: any) => i.name).join(", ") || "(leer)"}`,
     `Vorrat (immer da): ${s.pantry.join(", ") || "(leer)"}`,
     `Jede Woche: ${s.recurring.map((r: any) => `${r.name} (${["", "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][r.weekday]})`).join(", ") || "(nichts)"}`,
+    `To-dos (offen): ${s.todos.map((t: any) => t.title + (t.due ? ` (bis ${t.due})` : "")).join("; ") || "(keine)"}`,
     `Abgehakt: ${s.items.filter((i: any) => i.checked).map((i: any) => i.name).join(", ") || "(nichts)"}`,
     `Wochenplan:\n${s.plan.map((p: any) => `${p.day} (${wd(p.day)}): ${s.recipes.find((r: any) => r.id === p.recipe_id)?.title || "?"}, ${p.servings} P.`).join("\n") || "(leer)"}`,
     `Bisheriger Chat:\n${await history(chat_id) || "(neu)"}`,
@@ -133,6 +138,16 @@ async function agent(chat_id: number, text: string) {
           done.push(`Notiz bei «${hit.r.title}»`);
         }
       }
+      if (a.type === "todo_add") {
+        const rows = (a.items || []).filter((t: any) => t?.title).map((t: any) => ({ title: String(t.title), due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || "") ? t.due : null }));
+        if (rows.length) { await db.from("todos").insert(rows); done.push(`${rows.length} To-do${rows.length > 1 ? "s" : ""} notiert`); }
+      }
+      if (a.type === "todo_done" || a.type === "todo_remove") {
+        const keys = (a.titles || []).map((x: string) => x.toLowerCase());
+        const hits = s.todos.filter((t: any) => keys.some((k: string) => t.title.toLowerCase().includes(k) || k.includes(t.title.toLowerCase())));
+        for (const h of hits) a.type === "todo_done" ? await db.from("todos").update({ done: true, done_at: new Date().toISOString() }).eq("id", h.id) : await db.from("todos").delete().eq("id", h.id);
+        done.push(`${hits.length} To-do${hits.length === 1 ? "" : "s"} ${a.type === "todo_done" ? "erledigt" : "gelöscht"}`);
+      }
       if (a.type === "pantry_add") {
         const rows = (a.names || []).map((n: string) => ({ id: normName(n), name: n.charAt(0).toUpperCase() + n.slice(1) }));
         if (rows.length) { await db.from("pantry").upsert(rows); done.push(`${rows.length} im Vorrat`); }
@@ -173,9 +188,13 @@ async function handle(msg: any) {
   tg("sendChatAction", { chat_id, action: "typing" });
 
   if (text === "/start" || text === "/hilfe") {
-    return send(chat_id, `Hoi! Ich kümmere mich um eure Küche. Zum Beispiel:\n• «Milch, Eier und 2 Zitronen auf die Liste»\n• «Plane nächste Woche, 5 Abende, einmal Fisch»\n• «Was kann ich mit Lauch und Kartoffeln kochen?»\n• Einen Rezept-Link, ein TikTok-Video oder ein Foto aus dem Kochbuch schicken\n\nBefehle: /liste /plan${APP_URL ? `\nApp: ${APP_URL}` : ""}`);
+    return send(chat_id, `Hoi! Ich kümmere mich um eure Küche. Zum Beispiel:\n• «Milch, Eier und 2 Zitronen auf die Liste»\n• «Plane nächste Woche, 5 Abende, einmal Fisch»\n• «Was kann ich mit Lauch und Kartoffeln kochen?»\n• Einen Rezept-Link, ein TikTok-Video oder ein Foto aus dem Kochbuch schicken\n• «To-do: Velo flicken bis Samstag»\n\nBefehle: /liste /plan /todo${APP_URL ? `\nApp: ${APP_URL}` : ""}`);
   }
   if (text === "/liste") { const s = await snapshot(today()); return send(chat_id, listText(s.items)); }
+  if (text === "/todo" || text === "/todos") {
+    const s = await snapshot(today());
+    return send(chat_id, s.todos.length ? "<b>To-dos</b>\n" + s.todos.map((t: any) => `• ${esc(t.title)}${t.due ? ` (bis ${short(t.due)})` : ""}`).join("\n") : "Keine offenen To-dos.");
+  }
   if (text === "/plan") { const s = await snapshot(today()); return send(chat_id, await planText(s.plan, s.recipes, today())); }
 
   // Video (z. B. gespeichertes TikTok) oder Foto (Kochbuch) -> Rezept

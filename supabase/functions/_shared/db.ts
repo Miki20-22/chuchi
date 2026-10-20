@@ -66,7 +66,8 @@ export async function snapshot(today: string) {
   for (const p of past) if (!last[p.recipe_id] || p.day > last[p.recipe_id]) last[p.recipe_id] = p.day;
   const pantry = ((await db.from("pantry").select("name")).data || []).map((p: any) => p.name);
   const recurring = (await db.from("recurring").select("name,weekday")).data || [];
-  return { recipes: must(recipes), items: must(items), plan: must(plan), last, pantry, recurring };
+  const todos = ((await db.from("todos").select("*").eq("done", false)).data || []).sort((x: any, y: any) => (x.due || "9999").localeCompare(y.due || "9999"));
+  return { recipes: must(recipes), items: must(items), plan: must(plan), last, pantry, recurring, todos };
 }
 
 export function listText(items: any[]) {

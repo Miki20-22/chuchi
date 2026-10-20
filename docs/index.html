@@ -145,6 +145,14 @@ label.lbl { display: flex; flex-direction: column; gap: 6px; font-size: .82rem; 
 .mini .mrow small { color: var(--muted); display: block; font-size: .8rem; }
 select.field { appearance: auto; }
 .btn.on { background: var(--hi); color: #1b1b1b; }
+.navrow { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 0; border-radius: var(--r); box-shadow: var(--shadow); padding: 14px 16px; text-align: left; width: 100%; }
+.navrow .grow { flex: 1; min-width: 0; }
+.navrow b { font-family: var(--f-display); font-size: 1.1rem; font-weight: 600; display: block; }
+.navrow small { color: var(--muted); font-size: .84rem; }
+.navrow .count { background: var(--accent); color: var(--accent-ink); border-radius: 99px; padding: 1px 9px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.due { font-size: .76rem; padding: 1px 8px; border-radius: 99px; background: var(--soft); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.due.late { background: var(--warn); color: var(--surface); }
+.due.today { background: var(--hi); color: #1b1b1b; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { font-size: .74rem; background: var(--soft); color: var(--ink); padding: 2px 8px; border-radius: 99px; }
 
@@ -359,9 +367,9 @@ function fmtQty(qty, unit) {
 }
 
 // ---------- Datenhaltung ----------
-const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides", "pantry", "recurring"];
-const OPTIONAL = ["pantry", "recurring"]; // ab Update 3
-const emptyS = () => ({ recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [], pantry: [], recurring: [] });
+const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides", "pantry", "recurring", "todos"];
+const OPTIONAL = ["pantry", "recurring", "todos"]; // ab Update 3/4
+const emptyS = () => ({ recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [], pantry: [], recurring: [], todos: [] });
 const fixS = x => { const e = emptyS(); for (const k in e) if (!Array.isArray(x && x[k])) (x = x || {})[k] = e[k]; return x; };
 let S = emptyS();
 let mode = "demo", sb = null, session = null, channel = null;
@@ -584,6 +592,7 @@ const starsTxt = n => `<span class="st" aria-label="${n} von 5 Sternen">${"★".
 
 // ---------- UI-Zustand ----------
 let recipeSort = LS.get("chuchi.sort", "az");
+let moreView = null; // null | "todos"
 let tab = "list", weekStart = monday(new Date()), recipeId = null, servingsView = null, query = "", doneSteps = new Set();
 const ICON = {
   more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
@@ -608,7 +617,7 @@ function render() {
   if (tab === "list") { $("#title").textContent = "Einkaufsliste"; html += viewList(); }
   if (tab === "recipes") { const r = recipeId && S.recipes.find(x => x.id === recipeId); $("#title").textContent = r ? "Rezept" : "Rezepte"; html += r ? viewRecipe(r) : viewRecipes(); }
   if (tab === "week") { $("#title").textContent = "Wochenplan"; html += viewWeek(); }
-  if (tab === "more") { $("#title").textContent = "Mehr"; html += viewMore(); }
+  if (tab === "more") { $("#title").textContent = moreView === "todos" ? "To-dos" : "Mehr"; html += moreView === "todos" ? viewTodos() : viewMore(); }
   v.innerHTML = html;
   if (focus) { const el = document.getElementById(focus); if (el) { el.focus(); if (val != null && "value" in el) { el.value = val; try { el.setSelectionRange(pos, pos); } catch {} } } }
 }
@@ -692,9 +701,42 @@ function viewWeek() {
   return h;
 }
 
+function dueInfo(day) {
+  if (!day) return "";
+  const t = iso(new Date()), tm = iso(addDays(new Date(), 1));
+  if (day < t) return `<span class="due late">überfällig · ${dm(fromIso(day))}</span>`;
+  if (day === t) return `<span class="due today">heute</span>`;
+  if (day === tm) return `<span class="due">morgen</span>`;
+  return `<span class="due">${WD[fromIso(day).getDay()]} ${dm(fromIso(day))}</span>`;
+}
+function viewTodos() {
+  const open = S.todos.filter(t => !t.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || (a.created_at || "").localeCompare(b.created_at || ""));
+  const done = S.todos.filter(t => t.done).sort((a, b) => (b.done_at || "").localeCompare(a.done_at || ""));
+  const row = t => `<div class="item${t.done ? " done" : ""}"><button class="tap" data-act="todoToggle" data-id="${t.id}"><span class="check" aria-hidden="true"></span><span class="name">${esc(t.title)}</span>${t.done ? "" : dueInfo(t.due)}</button><button class="iconbtn" data-act="todoEdit" data-id="${t.id}" aria-label="${esc(t.title)} bearbeiten">${ICON.more}</button></div>`;
+  let h = `<div class="row"><button class="btn ghost small" data-act="moreBack">‹ Mehr</button></div>
+  <form class="addbar" data-form="todo"><input class="field" id="todoInput" placeholder="z. B. Pflanzen giessen" autocomplete="off" aria-label="Neue Aufgabe"><button class="btn" type="submit">Hinzufügen</button></form>
+  <label class="lbl" style="flex-direction:row;align-items:center;gap:10px">Fällig am (optional)<input class="field" id="todoDue" type="date" style="width:auto;flex:1"></label>`;
+  if (missingTables) h += `<div class="banner">Für die To-dos fehlt noch das Datenbank-Update 4.</div>`;
+  if (!open.length && !done.length) return h + `<div class="empty"><strong>Keine Aufgaben</strong><span>Tippe oben eine ein oder schreib dem Bot «To-do: Velo flicken bis Samstag».</span></div>`;
+  h += open.length ? `<div class="items">${open.map(row).join("")}</div>` : `<div class="empty"><strong>Alles erledigt</strong></div>`;
+  if (done.length) h += `<details class="cart"><summary><span class="chev">›</span> Erledigt (${done.length})<span style="flex:1"></span><button class="btn small ghost" type="button" data-act="todoClear">Erledigte löschen</button></summary><div class="items">${done.map(row).join("")}</div></details>`;
+  return h;
+}
+function todoSheet(id) {
+  const t = S.todos.find(x => x.id === id); if (!t) return;
+  sheet(`<h2>Aufgabe bearbeiten</h2><label class="lbl">Aufgabe<input class="field" id="tdTitle" value="${esc(t.title)}"></label><label class="lbl">Fällig am<input class="field" id="tdDue" type="date" value="${esc(t.due || "")}"></label>
+  <div class="actions"><button class="btn grow" id="tdSave">Speichern</button><button class="btn danger" id="tdDel">Löschen</button></div>`, s => {
+    $("#tdSave", s).onclick = () => { write([["todos", "update", { id, title: $("#tdTitle", s).value.trim() || t.title, due: $("#tdDue", s).value || null }]]); closeSheet(); };
+    $("#tdDel", s).onclick = () => { write([["todos", "delete", { id }]]); closeSheet(); };
+  });
+}
 function viewMore() {
   const c = cfg() || {};
-  let h = `<div class="panel"><h3>Cloud-Synchronisation</h3>`;
+  const openT = S.todos.filter(t => !t.done), td = iso(new Date());
+  const urgent = openT.filter(t => t.due && t.due <= td).length;
+  const nextT = [...openT].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"))[0];
+  let h = `<button class="navrow" data-act="openTodos"><span class="grow"><b>To-dos</b><small>${openT.length ? (urgent ? `${urgent} heute fällig oder überfällig` : `Als Nächstes: ${esc(nextT.title)}`) : "Keine offenen Aufgaben"}</small></span>${openT.length ? `<span class="count">${openT.length}</span>` : ""}<span aria-hidden="true">›</span></button>
+  <div class="panel"><h3>Cloud-Synchronisation</h3>`;
   if (mode === "cloud") {
     h += `<dl class="kv"><dt>Projekt</dt><dd>${esc((c.url || "").replace(/^https:\/\//, ""))}</dd><dt>Status</dt><dd>${session ? "Angemeldet als " + esc(session.user.email) : "Nicht angemeldet"}</dd><dt>Wartend</dt><dd>${outbox.length} Änderungen</dd></dl>`;
     if (!session) h += `<form data-form="login" style="display:flex;flex-direction:column;gap:10px"><label class="lbl">E-Mail<input class="field" id="lgEmail" type="email" autocomplete="username" required></label><label class="lbl">Passwort<input class="field" id="lgPw" type="password" autocomplete="current-password" required></label><button class="btn" type="submit">Anmelden</button></form>`;
@@ -881,7 +923,7 @@ async function estimateKcal(r, btn) {
 // ---------- Ereignisse ----------
 document.addEventListener("click", e => {
   const tb = e.target.closest("nav.tabs [data-tab]");
-  if (tb) { if (tab === tb.dataset.tab && tab === "recipes") recipeId = null; tab = tb.dataset.tab; if (tab === "week") weekStart = monday(new Date()); render(); window.scrollTo(0, 0); return; }
+  if (tb) { if (tab === tb.dataset.tab && tab === "recipes") recipeId = null; if (tb.dataset.tab === "more" && tab === "more") moreView = null; tab = tb.dataset.tab; if (tab === "week") weekStart = monday(new Date()); render(); window.scrollTo(0, 0); return; }
   const a = e.target.closest("[data-act]"); if (!a) return;
   const act = a.dataset.act, id = a.dataset.id;
   const cur = recipeId && S.recipes.find(x => x.id === recipeId);
@@ -894,6 +936,11 @@ document.addEventListener("click", e => {
     case "importRecipe": importSheet(); break;
     case "openRecipe": tab = "recipes"; recipeId = id; servingsView = null; doneSteps = new Set(); render(); window.scrollTo(0, 0); break;
     case "backRecipes": recipeId = null; render(); break;
+    case "openTodos": moreView = "todos"; render(); window.scrollTo(0, 0); break;
+    case "moreBack": moreView = null; render(); break;
+    case "todoToggle": { const t = S.todos.find(x => x.id === id); if (t) write([["todos", "update", { id, done: !t.done, done_at: t.done ? null : new Date().toISOString() }]]); break; }
+    case "todoEdit": todoSheet(id); break;
+    case "todoClear": e.preventDefault(); e.stopPropagation(); write(S.todos.filter(t => t.done).map(t => ["todos", "delete", { id: t.id }])); break;
     case "pantry": pantrySheet(); break;
     case "recurring": recurringSheet(); break;
     case "cookmode": setCookMode(!cookMode); break;
@@ -934,6 +981,12 @@ document.addEventListener("submit", async e => {
     const entries = v.split(/[,;\n]| und /).map(parseLine).filter(Boolean).map(p => ({ qty: p.qty, unit: p.unit, name: p.name }));
     inp.value = ""; const r = addToList(entries);
     if (r.merged) toast(`${r.merged}× mit bestehendem Artikel zusammengeführt`);
+  }
+  if (f === "todo") {
+    const v = $("#todoInput").value.trim(); if (!v) return;
+    const due = $("#todoDue").value || null;
+    $("#todoInput").value = ""; $("#todoDue").value = "";
+    write([["todos", "insert", { id: uid(), title: v, due, done: false, done_at: null, created_at: new Date().toISOString() }]]);
   }
   if (f === "note") {
     const r = S.recipes.find(x => x.id === recipeId); const v = $("#noteInput").value.trim();
@@ -980,6 +1033,7 @@ function demoData() {
   const items = [["Milch", 1000, "ml"], ["Rüebli", 500, "g"], ["Bananen", 6, null], ["Zopf", null, null], ["Gruyère", 200, "g"], ["Haferflocken", null, null], ["Toilettenpapier", null, null], ["Olivenöl", null, null]]
     .map(([name, qty, unit]) => ({ id: uid(), name, qty, unit, department: null, checked: false, recipe_title: null, created_at: now }));
   S = { recipes, meal_plan: plan, shopping_items: items, dept_overrides: [], recurring: [], pantry: ["Salz", "Pfeffer", "Olivenöl", "Basmati Reis", "Currypulver"].map(n => ({ id: normName(n), name: n })) };
+  S.todos = [{ id: uid(), title: "Entkalker für die Kaffeemaschine kaufen", due: iso(addDays(new Date(), 2)), done: false, done_at: null, created_at: now }, { id: uid(), title: "Kühlschrank abtauen", due: null, done: false, done_at: null, created_at: now }];
   S.recurring = [{ id: uid(), name: "Milch", qty: 2000, unit: "ml", department: "milch", weekday: 6, last_added: null }, { id: uid(), name: "Bananen", qty: 6, unit: null, department: "fruechte", weekday: 6, last_added: null }];
   items.forEach(i => i.department = detectDept(i.name));
   items[1].checked = true;
