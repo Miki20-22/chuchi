@@ -20,12 +20,17 @@ html = f"""<!doctype html>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>:root{{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}}body{{margin:0}}img{{max-width:100%}}[hidden]{{display:none!important}}</style>
+<script src="config.js"></script>
 {head}</head>
 <body>
 {body}
 </body>
 </html>
 """
+# Sicherheitsnetz: ohne config.js fragt die App nach Project URL und Key. Das darf nie passieren.
+assert '<script src="config.js"></script>' in html, "config.js fehlt in docs/index.html"
+cfg = (ROOT / "docs/config.js").read_text(encoding="utf-8")
+assert "supabase.co" in cfg and "HIER" not in cfg, "docs/config.js enthält keine gültige Verbindung"
 (ROOT / "docs/index.html").write_text(html, encoding="utf-8")
 
 # 2) Gemeinsame Regeln (Abteilungen, Mengen) für die Edge Functions
