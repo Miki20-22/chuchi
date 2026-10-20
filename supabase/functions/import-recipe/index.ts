@@ -1,6 +1,7 @@
 // @ts-nocheck
 // Wird von der App aufgerufen: { url } -> { recipe } (wird erst nach Prüfung in der App gespeichert)
 import { importRecipe, estimateKcal } from "../_shared/importer.ts";
+import { dedupeList } from "../_shared/dedupe.ts";
 
 const CORS = {
   "access-control-allow-origin": "*",
@@ -14,6 +15,7 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     if (body.kcal) return json({ kcal: await estimateKcal(body.kcal) });
+    if (body.dedupe) return json(await dedupeList(body.ai !== false));
     const { url } = body;
     if (!url) return json({ error: "Kein Link angegeben" });
     return json({ recipe: await importRecipe(String(url).trim()) });

@@ -2,6 +2,7 @@
 // Telegram-Bot: Einkaufsliste, Wochenplan, Rezept-Import und Vorschläge per Chat.
 import { gemini, RECIPE_RULES } from "../_shared/gemini.ts";
 import { importRecipe, fromVideo } from "../_shared/importer.ts";
+import { dedupeList } from "../_shared/dedupe.ts";
 import { db, addToList, recipeEntries, saveRecipe, snapshot, listText, esc, parseLine, normName, detectDept, toBase, CAT } from "../_shared/db.ts";
 
 const TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
@@ -108,11 +109,12 @@ async function agent(chat_id: number, text: string) {
 
   const out = await gemini([{ text: ctx }], { system: SYSTEM, temperature: 0.6 });
   const done: string[] = [];
+  let needDedupe = false;
   for (const a of out.actions || []) {
     try {
       if (a.type === "add_items") {
         const entries = (a.items || []).map((i: any) => { const p = parseLine(`${i.qty ?? ""} ${i.unit ?? ""} ${i.name}`.trim()); return p && { qty: p.qty, unit: p.unit, name: p.name }; });
-        const r = await addToList(entries.filter(Boolean)); done.push(`${r.added + r.merged} Artikel auf der Liste`);
+        const r = await addToList(entries.filter(Boolean)); done.push(`${r.added + r.merged} Artikel auf der Liste`); if (r.added) needDedupe = true;
       }
       if (a.type === "check_items" || a.type === "remove_items") {
         const keys = (a.names || []).map(normName);
@@ -135,7 +137,7 @@ async function agent(chat_id: number, text: string) {
       if (a.type === "plan_to_list") {
         const { data: plan } = await db.from("meal_plan").select("*, recipes(*)").gte("day", a.from).lte("day", a.to);
         const entries = (plan || []).flatMap((p: any) => p.recipes ? recipeEntries(p.recipes, p.servings) : []);
-        const r = await addToList(entries); done.push(`${r.added} neu, ${r.merged} zusammengeführt` + (r.skipped ? `, ${r.skipped} aus dem Vorrat weggelassen` : ""));
+        const r = await addToList(entries); done.push(`${r.added} neu, ${r.merged} zusammengeführt` + (r.skipped ? `, ${r.skipped} aus dem Vorrat weggelassen` : "")); if (r.added) needDedupe = true;
       }
       if (a.type === "rate") {
         const hit = refs.find(x => x.ref === a.recipe_ref);
@@ -192,6 +194,7 @@ async function agent(chat_id: number, text: string) {
       if (a.type === "save_recipe" && a.recipe?.title) { await saveRecipe(a.recipe); done.push(`Rezept «${a.recipe.title}» gespeichert`); }
     } catch (e) { done.push(`Fehler bei ${a.type}: ${e.message}`); }
   }
+  if (needDedupe) { try { const d = await dedupeList(); if (d.merged.length) done.push(`zusammengefasst: ${d.merged.join(", ")}`); } catch { /* AI nicht erreichbar: egal */ } }
   const reply = esc(out.reply || "Erledigt.") + (done.length ? `\n\n<i>✓ ${esc(done.join(" · "))}</i>` : "");
   await remember(chat_id, "bot", (out.reply || "") + (done.length ? ` [${done.join("; ")}]` : ""));
   return reply;

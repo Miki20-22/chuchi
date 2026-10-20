@@ -16,11 +16,13 @@ export async function addToList(entries: { name: string; qty?: number | null; un
   await loadOverrides();
   const open: any[] = must(await db.from("shopping_items").select("*").eq("checked", false));
   const pantry = new Set(((await db.from("pantry").select("id")).data || []).map((p: any) => p.id));
+  const aliases = new Map<string, string>(((await db.from("aliases").select("id,name")).data || []).map((a: any) => [a.id, a.name])); // gelernte Namen (Update 6)
   let added = 0, merged = 0, skipped = 0;
   const inserts: any[] = [], updates = new Map<string, any>();
-  for (const e of entries) {
+  for (let e of entries) {
     if (!e?.name) continue;
-    if (e.from && pantry.has(normName(e.name))) { skipped++; continue; }
+    const orig = e.name; e = { ...e, name: aliases.get(normName(e.name)) || e.name };
+    if (e.from && (pantry.has(normName(e.name)) || pantry.has(normName(orig)))) { skipped++; continue; }
     const [q, u] = toBase(e.qty ?? null, e.unit ?? null);
     const key = normName(e.name);
     const hit = open.find(i => normName(i.name) === key && ((i.unit || null) === (u || null) || i.qty == null || q == null));

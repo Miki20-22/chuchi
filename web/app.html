@@ -410,9 +410,9 @@ function fmtQty(qty, unit) {
 }
 
 // ---------- Datenhaltung ----------
-const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides", "pantry", "recurring", "todos", "counters"];
-const OPTIONAL = ["pantry", "recurring", "todos", "counters"]; // ab Update 3/4/5
-const emptyS = () => ({ recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [], pantry: [], recurring: [], todos: [], counters: [] });
+const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides", "pantry", "recurring", "todos", "counters", "aliases"];
+const OPTIONAL = ["pantry", "recurring", "todos", "counters", "aliases"]; // ab Update 3/4/5/6
+const emptyS = () => ({ recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [], pantry: [], recurring: [], todos: [], counters: [], aliases: [] });
 const fixS = x => { const e = emptyS(); for (const k in e) if (!Array.isArray(x && x[k])) (x = x || {})[k] = e[k]; return x; };
 let S = emptyS();
 let mode = "demo", sb = null, session = null, channel = null;
@@ -510,9 +510,10 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 function addToList(entries) {
   const ops = []; let added = 0, merged = 0, skipped = 0;
   const open = S.shopping_items.filter(i => !i.checked).map(i => ({ ...i }));
-  for (const e of entries) {
+  for (let e of entries) {
     if (!e || !e.name) continue;
     if (e.from && inPantry(e.name)) { skipped++; continue; }
+    e = { ...e, name: canonName(e.name) };
     const [q, u] = toBase(e.qty, e.unit);
     const key = normName(e.name);
     const hit = open.find(i => normName(i.name) === key && ((i.unit || null) === (u || null) || i.qty == null || q == null));
@@ -528,9 +529,30 @@ function addToList(entries) {
     }
   }
   write(ops.map(([t, op, r]) => [t, op, op === "update" ? { id: r.id, qty: r.qty, unit: r.unit, recipe_title: r.recipe_title } : r]));
+  if (added) scheduleDedupe();
   return { added, merged, skipped };
 }
-const inPantry = n => S.pantry.some(p => p.id === normName(n));
+/** Gelernter Name (z. B. «Bundzwiebeln mit dem Grün» → «Frühlingszwiebeln») */
+const canonName = n => { const a = (S.aliases || []).find(x => x.id === normName(n)); return a ? a.name : n; };
+const inPantry = n => S.pantry.some(p => p.id === normName(n) || p.id === normName(canonName(n)));
+// Nach dem Hinzufügen fasst die AI gleiche Produkte zusammen (läuft über die Cloud).
+let dedupeT = null, deduping = false;
+function scheduleDedupe() { if (mode !== "cloud" || !session) return; clearTimeout(dedupeT); dedupeT = setTimeout(() => dedupe(false), 2500); }
+async function dedupe(manual) {
+  if (mode !== "cloud" || !session) { if (manual) toast("Das Zusammenfassen läuft über eure Cloud. Bitte zuerst anmelden."); return; }
+  if (deduping) return; deduping = true;
+  if (manual) toast("Suche gleiche Artikel…");
+  try {
+    for (let i = 0; i < 20 && outbox.length; i++) { await flush(); if (outbox.length) await new Promise(r => setTimeout(r, 250)); }
+    const { data, error } = await sb.functions.invoke("import-recipe", { body: { dedupe: true } });
+    if (error) throw error;
+    if (data && data.error) throw new Error(data.error);
+    const m = (data && data.merged) || [];
+    if (m.length) { await loadCloud(); toast("Zusammengefasst: " + m.join(", ")); }
+    else if (manual) toast("Keine doppelten Artikel gefunden");
+  } catch (e) { if (manual) toast("Zusammenfassen nicht möglich: " + (e.message || e)); }
+  deduping = false;
+}
 const listToast = r => toast(`${r.added} neu, ${r.merged} zusammengeführt` + (r.skipped ? `, ${r.skipped} aus dem Vorrat weggelassen` : ""));
 function recipeEntries(r, servings) {
   const f = servings && r.servings ? servings / r.servings : 1;
@@ -674,7 +696,7 @@ function render() {
 function viewList() {
   const open = S.shopping_items.filter(i => !i.checked), done = S.shopping_items.filter(i => i.checked);
   let h = `<form class="addbar" data-form="add"><input class="field" id="addInput" placeholder="z. B. 2 l Milch, Rüebli, 500 g Hack" autocomplete="off" enterkeyhint="done" aria-label="Artikel hinzufügen"><button class="btn" type="submit">Hinzufügen</button></form>
-  <div class="listtools"><button class="btn ghost small" data-act="pantry">Vorrat${S.pantry.length ? ` (${S.pantry.length})` : ""}</button><button class="btn ghost small" data-act="recurring">Jede Woche${S.recurring.length ? ` (${S.recurring.length})` : ""}</button><span style="flex:1"></span>${S.shopping_items.length ? `<button class="iconbtn trash" data-act="clearList" aria-label="Ganze Einkaufsliste löschen">${ICON.trash}</button>` : ""}</div>`;
+  <div class="listtools"><button class="btn ghost small" data-act="pantry">Vorrat${S.pantry.length ? ` (${S.pantry.length})` : ""}</button><button class="btn ghost small" data-act="recurring">Jede Woche${S.recurring.length ? ` (${S.recurring.length})` : ""}</button>${mode === "cloud" && open.length > 1 ? `<button class="btn ghost small" data-act="dedupe">Zusammenfassen</button>` : ""}<span style="flex:1"></span>${S.shopping_items.length ? `<button class="iconbtn trash" data-act="clearList" aria-label="Ganze Einkaufsliste löschen">${ICON.trash}</button>` : ""}</div>`;
   if (!open.length && !done.length) return h + `<div class="empty"><strong>Die Liste ist leer</strong><span>Tippe oben einen Artikel ein oder füge Zutaten aus einem Rezept hinzu.</span></div>`;
   const groups = {};
   for (const i of open) (groups[i.department in DEPT ? i.department : "sonstiges"] ||= []).push(i);
@@ -1117,6 +1139,7 @@ document.addEventListener("click", e => {
     case "wk": weekStart = addDays(weekStart, +a.dataset.d); render(); break;
     case "planDay": if (!S.recipes.length) { toast("Erfasse zuerst ein Rezept."); break; } pickRecipeSheet(a.dataset.day); break;
     case "unplan": write([["meal_plan", "delete", { id }]]); break;
+    case "dedupe": dedupe(true); break;
     case "clearList": {
       const all = [...S.shopping_items]; if (!all.length) break;
       confirmSheet("Ganze Liste löschen?", `Alle ${all.length} Artikel werden von der Einkaufsliste gelöscht, auch die im Wagen.`, "Alles löschen", () => { write(all.map(i => ["shopping_items", "delete", { id: i.id }])); toast("Einkaufsliste geleert"); });
@@ -1214,7 +1237,7 @@ function demoData() {
   S.recurring = [{ id: uid(), name: "Milch", qty: 2000, unit: "ml", department: "milch", weekday: 6, last_added: null }, { id: uid(), name: "Bananen", qty: 6, unit: null, department: "fruechte", weekday: 6, last_added: null }];
   items.forEach(i => i.department = detectDept(i.name));
   items[1].checked = true;
-  return S;
+  return fixS(S);
 }
 
 // ---------- Start ----------

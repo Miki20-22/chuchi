@@ -22,12 +22,12 @@ AI: Google Gemini Free Tier (`GEMINI_MODEL`, Standard `gemini-flash-latest`).
 
 ## Tabellen
 
-`recipes` (ingredients/steps als JSON-Arrays von Strings, rating 1–5, kcal pro Portion, image_url = URL oder `storage:pfad`, category = id aus `CATS`, Raten mit `guessCategory()`), `shopping_items` (qty in Grundeinheit g/ml), `meal_plan`, `dept_overrides` (gelernte Abteilungen), `pantry` (Vorrat, id = normName), `recurring` (wöchentlich, weekday 1=Mo…7=So, Funktion `add_recurring()` + Cron 04:00 UTC), `todos`, `counters` (kind `countdown`/`since`, day, yearly, record = längster Stand vor Reset), `bot_messages`, `bot_updates`.
+`recipes` (ingredients/steps als JSON-Arrays von Strings, rating 1–5, kcal pro Portion, image_url = URL oder `storage:pfad`, category = id aus `CATS`, Raten mit `guessCategory()`), `shopping_items` (qty in Grundeinheit g/ml), `meal_plan`, `dept_overrides` (gelernte Abteilungen), `pantry` (Vorrat, id = normName), `recurring` (wöchentlich, weekday 1=Mo…7=So, Funktion `add_recurring()` + Cron 04:00 UTC), `todos`, `aliases` (id = normName(Variante) → name; von `_shared/dedupe.ts` per Gemini gelernt, App und Bot fassen damit gleiche Artikel zusammen), `counters` (kind `countdown`/`since`, day, yearly, record = längster Stand vor Reset), `bot_messages`, `bot_updates`.
 
 ## Arbeitsweise bei Änderungen
 
 1. App ändern in `web/app.html`, dann `python3 build.py`. Neue Tabellen in `T` und `OPTIONAL` eintragen, `emptyS()` ergänzen.
-2. Datenbank-Änderungen als neue Datei `supabase/update-N-name.sql` (idempotent: `if not exists`, `drop policy if exists`) **und** am Ende von `schema.sql` anhängen. Bisher: Update 2 (Bewertung/kcal), 3 (Vorrat/Wöchentlich/Fotos), 4 (To-dos), 5 (Kategorien, Countdowns & Zähler).
+2. Datenbank-Änderungen als neue Datei `supabase/update-N-name.sql` (idempotent: `if not exists`, `drop policy if exists`) **und** am Ende von `schema.sql` anhängen. Bisher: Update 2 (Bewertung/kcal), 3 (Vorrat/Wöchentlich/Fotos), 4 (To-dos), 5 (Kategorien, Countdowns & Zähler), 6 (aliases: gelernte Artikelnamen).
 3. Bot-Funktionen: neue Action im `SYSTEM`-Prompt beschreiben und in `agent()` ausführen; Kontext kommt aus `snapshot()` in `db.ts`.
 4. Testen: JS-Syntax mit `node --check`, TS mit `node --experimental-strip-types --check`, App im Headless-Browser (Playwright) im Demo-Modus.
 5. Auslieferung: Claude pusht direkt auf `main` (GitHub Pages und `backend.yml` deployen dann automatisch). Bei Datenbank-Änderungen **vorher** das SQL kurz im Chat zum Kopieren zeigen und auf Michaels Bestätigung warten, dass er es im Supabase SQL Editor ausgeführt hat; erst dann pushen. Falls Pushen nicht geht (GitHub-App nicht installiert): ZIP mit `docs`, `supabase`, `web`, Michael lädt die Ordner auf GitHub hoch. Danach App schliessen und neu öffnen. Bei Änderungen an `docs/` die Cache-Version in `docs/sw.js` erhöhen.

@@ -1,6 +1,6 @@
 // Offline-Unterstützung: App-Hülle zwischenspeichern. Daten kommen live von Supabase
 // und werden in der App selbst (localStorage) für offline gecacht.
-const CACHE = "chuchi-v6";
+const CACHE = "chuchi-v7";
 const SHELL = ["./", "index.html", "config.js", "manifest.json", "icon-192.png", "icon-512.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"];
 
