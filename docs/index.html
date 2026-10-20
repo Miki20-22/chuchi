@@ -8,7 +8,6 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
-<script src="config.js"></script>
 <title>Chuchichäschtli</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -209,6 +208,28 @@ select.field { appearance: auto; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: .9rem; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Rezeptkategorien */
+.catbar { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.catbar::-webkit-scrollbar { display: none; }
+.catbar .chip { white-space: nowrap; flex: none; }
+.catbar .chip small { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+.tag.cat { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.catgroup h2 { font-size: .8rem; font-family: var(--f-body); font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 6px 2px; }
+
+/* Countdowns & Zähler */
+.ctrs { display: grid; gap: 10px; }
+.ctr { background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow); border: 0; width: 100%; text-align: left; padding: 14px 16px; display: grid; grid-template-columns: 1fr auto; gap: 2px 14px; align-items: center; }
+.ctr .nm { font-family: var(--f-display); font-size: 1.12rem; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.ctr .sub { grid-column: 1; font-size: .82rem; color: var(--muted); }
+.ctr .big { grid-column: 2; grid-row: 1 / span 2; text-align: right; font-family: var(--f-display); font-weight: 800; font-size: 2.2rem; line-height: 1; font-variant-numeric: tabular-nums; color: var(--accent); }
+.ctr .big small { display: block; font-family: var(--f-body); font-size: .74rem; font-weight: 700; color: var(--muted); letter-spacing: .04em; margin-top: 3px; }
+.ctr.now .big { color: var(--star); }
+.ctr.past { opacity: .7; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.seg .chip { justify-content: center; padding: 10px 12px; }
+.check-row { display: flex; align-items: center; gap: 10px; font-size: .95rem; }
+.check-row input { width: 20px; height: 20px; accent-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -350,6 +371,38 @@ function normName(n) {
   return s;
 }
 function toBase(qty, unit) { if (qty == null) return [null, unit]; const b = BASE[unit]; return b ? [qty * b[1], b[0]] : [qty, unit]; }
+
+// ---------- Rezeptkategorien (auch vom Bot und beim Import verwendet) ----------
+const CATS = [
+  { id: "hauptgang", name: "Hauptgang" },
+  { id: "salat", name: "Salat & Vorspeise" },
+  { id: "suppe", name: "Suppe" },
+  { id: "beilage", name: "Beilage" },
+  { id: "dessert", name: "Dessert" },
+  { id: "backen", name: "Backen & Brot" },
+  { id: "fruehstueck", name: "Frühstück & Brunch" },
+  { id: "apero", name: "Apéro & Snacks" },
+  { id: "getraenk", name: "Getränke" }
+];
+const CAT = Object.fromEntries(CATS.map(c => [c.id, c]));
+// Reihenfolge zählt: «Fruchtsalat» ist Dessert, «Brotsalat» ist Salat, «Kartoffelsalat» ist Salat.
+const CAT_RULES = [
+  ["getraenk", /smoothie|cocktail|mocktail|limonade|sirup|punsch|glühwein|eistee|milchshake|\bshake\b|\blatte\b|\bchai\b|getränk|\bdrink/],
+  ["suppe", /suppe|bouillon|eintopf|minestrone|gazpacho|chowder|\bramen\b|\bpho\b|velouté|\bsoup/],
+  ["dessert", /dessert|mousse|tiramisu|glace|\beis\b|crème brûlée|creme brulee|pudding|panna cotta|parfait|kompott|crumble|meringue|fruchtsalat|sorbet|vermicelles|fondue au chocolat|schokoladenfondue|süssspeise|nachspeise|nachtisch|tiramisù|zabaione|clafoutis/],
+  ["salat", /salat|carpaccio|bruschetta|vorspeise|tatar|ceviche|antipast|\bsalad/],
+  ["fruehstueck", /frühstück|brunch|porridge|müesli|muesli|overnight oats|pancake|omelett|rührei|shakshuka|granola|french toast|birchermüesli|bircher|smoothie bowl|eggs benedict/],
+  ["backen", /kuchen|torte|muffin|cookie|guetzli|brownie|\bcake\b|cupcake|cheesecake|\bbrot\b|zopf|gugelhopf|scones|biscuit|plätzchen|brötchen|weggli|gipfeli|focaccia|baguette|cantuccini|lebkuchen|grittibänz|früchtewähe|apfelwähe|zwetschgenwähe|aprikosenwähe|rhabarberwähe|backen|gebäck|\btarte tatin/],
+  ["apero", /apéro|apero|\bdip\b|hummus|guacamole|tapas|fingerfood|snack|crostini|blätterteigstangen|blätterteigschnecken|käsestangen|tzatziki|aufstrich|antipasti/],
+  ["beilage", /beilage|kartoffelstock|ofenkartoffeln|bratkartoffeln|pommes|rösti\b|kartoffelgratin|ofengemüse|\bpüree\b/]
+];
+/** Kategorie aus Titel und Tags erraten (Standard: Hauptgang) */
+function guessCategory(title, tags) {
+  const t = " " + [title, ...(tags || [])].join(" ").toLowerCase() + " ";
+  for (const [id, re] of CAT_RULES) if (re.test(t)) return id;
+  return "hauptgang";
+}
+const validCat = c => (c && CAT[c]) ? c : null;
 function round(n) { return Math.round(n * 100) / 100; }
 function fmtNum(n) {
   const r = round(n), w = Math.floor(r), f = r - w;
@@ -367,9 +420,9 @@ function fmtQty(qty, unit) {
 }
 
 // ---------- Datenhaltung ----------
-const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides", "pantry", "recurring", "todos"];
-const OPTIONAL = ["pantry", "recurring", "todos"]; // ab Update 3/4
-const emptyS = () => ({ recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [], pantry: [], recurring: [], todos: [] });
+const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides", "pantry", "recurring", "todos", "counters"];
+const OPTIONAL = ["pantry", "recurring", "todos", "counters"]; // ab Update 3/4/5
+const emptyS = () => ({ recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [], pantry: [], recurring: [], todos: [], counters: [] });
 const fixS = x => { const e = emptyS(); for (const k in e) if (!Array.isArray(x && x[k])) (x = x || {})[k] = e[k]; return x; };
 let S = emptyS();
 let mode = "demo", sb = null, session = null, channel = null;
@@ -417,7 +470,8 @@ async function flush() {
 async function loadCloud() {
   for (const t of T) {
     const { data, error } = await sb.from(t).select("*");
-    if (error) { if (OPTIONAL.includes(t)) { S[t] = []; missingTables = true; continue; } throw error; }
+    if (error) { if (OPTIONAL.includes(t)) { S[t] = []; missingTables = true; missing.add(t); continue; } throw error; }
+    missing.delete(t);
     S[t] = data;
   }
   refreshPhotos();
@@ -436,6 +490,9 @@ function subscribe() {
   }).subscribe(st => { live = st === "SUBSCRIBED"; setSync(); });
 }
 let live = false, missingTables = false;
+const missing = new Set();
+/** Spalte «category» vorhanden? (fehlt, solange Update 5 nicht ausgeführt ist) */
+const hasCat = () => mode !== "cloud" || !S.recipes.length || S.recipes.some(r => "category" in r);
 function setSync() {
   const el = $("#sync");
   if (mode === "demo") { el.className = "sync"; el.lastChild.textContent = "Demo"; return; }
@@ -592,7 +649,8 @@ const starsTxt = n => `<span class="st" aria-label="${n} von 5 Sternen">${"★".
 
 // ---------- UI-Zustand ----------
 let recipeSort = LS.get("chuchi.sort", "az");
-let moreView = null; // null | "todos"
+let catFilter = LS.get("chuchi.cat", null);
+let moreView = null; // null | "todos" | "counters"
 let tab = "list", weekStart = monday(new Date()), recipeId = null, servingsView = null, query = "", doneSteps = new Set();
 const ICON = {
   more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
@@ -617,7 +675,7 @@ function render() {
   if (tab === "list") { $("#title").textContent = "Einkaufsliste"; html += viewList(); }
   if (tab === "recipes") { const r = recipeId && S.recipes.find(x => x.id === recipeId); $("#title").textContent = r ? "Rezept" : "Rezepte"; html += r ? viewRecipe(r) : viewRecipes(); }
   if (tab === "week") { $("#title").textContent = "Wochenplan"; html += viewWeek(); }
-  if (tab === "more") { $("#title").textContent = moreView === "todos" ? "To-dos" : "Mehr"; html += moreView === "todos" ? viewTodos() : viewMore(); }
+  if (tab === "more") { $("#title").textContent = moreView === "todos" ? "To-dos" : moreView === "counters" ? "Countdowns" : "Mehr"; html += moreView === "todos" ? viewTodos() : moreView === "counters" ? viewCounters() : viewMore(); }
   v.innerHTML = html;
   if (focus) { const el = document.getElementById(focus); if (el) { el.focus(); if (val != null && "value" in el) { el.value = val; try { el.setSelectionRange(pos, pos); } catch {} } } }
 }
@@ -644,16 +702,26 @@ function itemRow(i) {
 
 function viewRecipes() {
   const q = query.toLowerCase();
-  const list = S.recipes.filter(r => !q || r.title.toLowerCase().includes(q) || (r.tags || []).join(" ").toLowerCase().includes(q) || (r.ingredients || []).join(" ").toLowerCase().includes(q))
+  const catOk = hasCat();
+  const byQuery = S.recipes.filter(r => !q || r.title.toLowerCase().includes(q) || (r.tags || []).join(" ").toLowerCase().includes(q) || (r.ingredients || []).join(" ").toLowerCase().includes(q) || (CAT[r.category] && CAT[r.category].name.toLowerCase().includes(q)));
+  if (catFilter && catFilter !== "none" && !CAT[catFilter]) catFilter = null;
+  const list = byQuery.filter(r => !catOk || !catFilter || (catFilter === "none" ? !validCat(r.category) : r.category === catFilter))
     .sort((a, b) => a.title.localeCompare(b.title, "de"));
   if (recipeSort === "rating") list.sort((a, b) => (b.rating || 0) - (a.rating || 0));
   if (recipeSort === "last") list.sort((a, b) => (lastPlanned(a.id) || "0").localeCompare(lastPlanned(b.id) || "0"));
   let h = `<div class="row"><input class="field grow" id="search" type="search" placeholder="Suchen: Titel, Zutat, Tag" value="${esc(query)}" aria-label="Rezepte suchen"></div>
-  <div class="row"><button class="btn grow" data-act="newRecipe">Neues Rezept</button><button class="btn ghost grow" data-act="importRecipe">Per Link importieren</button></div>
-  <div class="sortbar" role="group" aria-label="Sortierung">${[["az", "A–Z"], ["rating", "Beste zuerst"], ["last", "Lange nicht gekocht"]].map(([k, l]) => `<button class="chip" data-act="sort" data-k="${k}" aria-pressed="${recipeSort === k}">${l}</button>`).join("")}</div>`;
+  <div class="row"><button class="btn grow" data-act="newRecipe">Neues Rezept</button><button class="btn ghost grow" data-act="importRecipe">Per Link importieren</button></div>`;
+  if (catOk && S.recipes.length) {
+    const n = id => byQuery.filter(r => id === "none" ? !validCat(r.category) : r.category === id).length;
+    const chips = [[null, "Alle", byQuery.length], ...CATS.map(c => [c.id, c.name, n(c.id)]).filter(x => x[2] || x[0] === catFilter), ...(n("none") || catFilter === "none" ? [["none", "Ohne Kategorie", n("none")]] : [])];
+    h += `<div class="catbar" role="group" aria-label="Kategorie">${chips.map(([id, l, c]) => `<button class="chip" data-act="cat" data-k="${id || ""}" aria-pressed="${(catFilter || null) === id}">${esc(l)} <small>${c}</small></button>`).join("")}</div>`;
+  }
+  h += `<div class="sortbar" role="group" aria-label="Sortierung">${[["az", "A–Z"], ["rating", "Beste zuerst"], ["last", "Lange nicht gekocht"]].map(([k, l]) => `<button class="chip" data-act="sort" data-k="${k}" aria-pressed="${recipeSort === k}">${l}</button>`).join("")}</div>`;
+  const uncategorized = catOk ? S.recipes.filter(r => !validCat(r.category)).length : 0;
+  if (uncategorized && !q) h += `<div class="banner row" style="align-items:center"><span class="grow">${uncategorized === 1 ? "1 Rezept hat" : `${uncategorized} Rezepte haben`} noch keine Kategorie.</span><button class="btn small" data-act="autoCat">Automatisch zuordnen</button></div>`;
   if (!S.recipes.length) return h + `<div class="empty"><strong>Noch keine Rezepte</strong><span>Erfasse eins von Hand oder importiere es von Fooby, Betty Bossi, Chefkoch und Co.</span></div>`;
-  if (!list.length) return h + `<div class="empty"><strong>Nichts gefunden</strong><span>Versuch es mit einer Zutat, z. B. «Kichererbsen».</span></div>`;
-  return h + `<div class="cards">${list.map(r => `<button class="rcard" data-act="openRecipe" data-id="${r.id}">${(() => { const u = photoUrl(r); return `<span class="ph" ${u ? `style="background-image:url('${esc(u)}')"` : ""}>${u ? "" : esc(r.title.charAt(0))}</span>`; })()}<span class="t"><span class="rt">${esc(r.title)}</span><span class="meta">${r.servings || "?"} Portionen${r.kcal ? ` · ≈ ${r.kcal} kcal` : ""}${(r.tags || []).length ? " · " + esc(r.tags.join(", ")) : ""}</span><span class="meta2">${r.rating ? starsTxt(r.rating) : ""}<span>${(() => { const l = lastPlanned(r.id); return l ? "zuletzt " + relDay(l) : "noch nie geplant"; })()}</span></span></span></button>`).join("")}</div>`;
+  if (!list.length) return h + `<div class="empty"><strong>Nichts gefunden</strong><span>${catFilter ? "In dieser Kategorie gibt es dazu nichts." : "Versuch es mit einer Zutat, z. B. «Kichererbsen»."}</span></div>`;
+  return h + `<div class="cards">${list.map(r => `<button class="rcard" data-act="openRecipe" data-id="${r.id}">${(() => { const u = photoUrl(r); return `<span class="ph" ${u ? `style="background-image:url('${esc(u)}')"` : ""}>${u ? "" : esc(r.title.charAt(0))}</span>`; })()}<span class="t"><span class="rt">${esc(r.title)}</span><span class="meta">${!catFilter && CAT[r.category] ? esc(CAT[r.category].name) + " · " : ""}${r.servings || "?"} Portionen${r.kcal ? ` · ≈ ${r.kcal} kcal` : ""}${(r.tags || []).length ? " · " + esc(r.tags.join(", ")) : ""}</span><span class="meta2">${r.rating ? starsTxt(r.rating) : ""}<span>${(() => { const l = lastPlanned(r.id); return l ? "zuletzt " + relDay(l) : "noch nie geplant"; })()}</span></span></span></button>`).join("")}</div>`;
 }
 
 function viewRecipe(r) {
@@ -669,7 +737,7 @@ function viewRecipe(r) {
   <div class="detail" style="display:flex;flex-direction:column;gap:14px">
     ${photoUrl(r) ? `<div class="hero" style="background-image:url('${esc(photoUrl(r))}')" role="img" aria-label="Foto von ${esc(r.title)}"></div>` : ""}
     <h2>${esc(r.title)}</h2>
-    ${(r.tags || []).length ? `<div class="tags">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>` : ""}
+    ${(r.tags || []).length || CAT[r.category] ? `<div class="tags">${CAT[r.category] ? `<span class="tag cat">${esc(CAT[r.category].name)}</span>` : ""}${(r.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>` : ""}
     <div class="rate" role="group" aria-label="Bewertung">${[1, 2, 3, 4, 5].map(n => `<button data-act="rate" data-n="${n}" class="${(r.rating || 0) >= n ? "on" : ""}" aria-label="${n} ${n === 1 ? "Stern" : "Sterne"}">★</button>`).join("")}${r.rating ? "" : `<span class="hint" style="margin-left:6px">Noch nicht bewertet</span>`}</div>
     <div class="facts">${r.kcal ? `<span><b>≈ ${r.kcal} kcal</b> pro Portion</span>` : `<button class="btn ghost small" data-act="estimateKcal">Kalorien schätzen</button>`}${(() => { const l = lastPlanned(r.id); return `<span>Zuletzt geplant: <b>${l ? `${WD[fromIso(l).getDay()]} ${dm(fromIso(l))}` : "noch nie"}</b>${l ? ` (${relDay(l)})` : ""}</span>`; })()}${next ? `<span>Nächstes Mal: <b>${WD[fromIso(next.day).getDay()]} ${dm(fromIso(next.day))}</b></span>` : ""}</div>
     <div class="actions"><button class="btn" data-act="recipeToList">Auf die Einkaufsliste</button><button class="btn ghost" data-act="planRecipe">Einplanen</button><button class="btn ghost${cookMode ? " on" : ""}" data-act="cookmode" aria-pressed="${cookMode}">${cookMode ? "Kochmodus an: Bildschirm bleibt wach" : "Kochmodus"}</button></div>
@@ -730,12 +798,99 @@ function todoSheet(id) {
     $("#tdDel", s).onclick = () => { write([["todos", "delete", { id }]]); closeSheet(); };
   });
 }
+// ---------- Countdowns & Zähler ----------
+const fmtDate = d => `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+/** «7 Monate, 3 Tage» zwischen zwei Daten (a <= b) */
+function span(a, b) {
+  let y = b.getFullYear() - a.getFullYear(), m = b.getMonth() - a.getMonth(), d = b.getDate() - a.getDate();
+  if (d < 0) { m--; d += new Date(b.getFullYear(), b.getMonth(), 0).getDate(); }
+  if (m < 0) { y--; m += 12; }
+  if (!y && !m) { const w = Math.floor(d / 7); return [w && plural(w, "Woche", "Wochen"), d % 7 && plural(d % 7, "Tag", "Tage")].filter(Boolean).join(", "); }
+  return [y && plural(y, "Jahr", "Jahre"), m && plural(m, "Monat", "Monate"), d && plural(d, "Tag", "Tage")].filter(Boolean).join(", ");
+}
+function counterInfo(c) {
+  const today = fromIso(iso(new Date())), start = fromIso(c.day);
+  if (c.kind === "since") {
+    const n = Math.max(0, Math.round((today - start) / 864e5));
+    return { n, big: n, unit: n === 1 ? "Tag" : "Tage", cls: "",
+      sub: n === 0 ? "Heute gestartet" + (c.record ? ` · Rekord ${plural(c.record, "Tag", "Tage")}` : "")
+        : `seit ${WD[start.getDay()]} ${fmtDate(start)}${n >= 14 ? " · " + span(start, today) : ""}${c.record ? ` · Rekord ${plural(c.record, "Tag", "Tage")}` : ""}` };
+  }
+  let target = start, years = 0;
+  if (c.yearly) {
+    target = new Date(today.getFullYear(), start.getMonth(), start.getDate());
+    if (target < today) target = new Date(today.getFullYear() + 1, start.getMonth(), start.getDate());
+    years = target.getFullYear() - start.getFullYear();
+  }
+  const n = Math.round((target - today) / 864e5);
+  const when = `${WD[target.getDay()]} ${fmtDate(target)}${years > 0 ? ` · ${plural(years, "Jahr", "Jahre")}` : ""}`;
+  if (n === 0) return { n, big: "Heute", unit: "ist es so weit", cls: "now", sub: when };
+  if (n < 0) return { n, big: -n, unit: -n === 1 ? "Tag her" : "Tage her", cls: "past", sub: when };
+  return { n, big: n, unit: n === 1 ? "Tag" : "Tage", cls: "", sub: `${when}${n >= 14 ? " · noch " + span(today, target) : ""}` };
+}
+function counterCard(c) {
+  const i = counterInfo(c);
+  return `<button class="ctr ${i.cls}" data-act="ctrEdit" data-id="${c.id}"><span class="nm">${esc(c.name)}</span><span class="big">${esc(i.big)}<small>${esc(i.unit)}</small></span><span class="sub">${esc(i.sub)}</span></button>`;
+}
+function viewCounters() {
+  const cd = S.counters.filter(c => c.kind !== "since").map(c => [c, counterInfo(c).n]).sort((a, b) => (a[1] < 0) - (b[1] < 0) || (a[1] >= 0 ? a[1] - b[1] : b[1] - a[1])).map(x => x[0]);
+  const since = S.counters.filter(c => c.kind === "since").sort((a, b) => b.day.localeCompare(a.day));
+  let h = `<div class="row"><button class="btn ghost small" data-act="moreBack">‹ Mehr</button><span class="grow"></span><button class="btn small" data-act="ctrNew">Neu</button></div>`;
+  if (missing.has("counters")) h += `<div class="banner">Für diese Funktion fehlt noch das Datenbank-Update 5.</div>`;
+  if (!S.counters.length) return h + `<div class="empty"><strong>Noch nichts zum Zählen</strong><span>Ein Countdown zählt die Tage bis zu einem Datum, z. B. Hochzeit oder Ferien. Ein Zähler zählt die Tage seit etwas, z. B. «Letztes Date», und lässt sich zurücksetzen.</span><button class="btn" data-act="ctrNew">Ersten erfassen</button></div>`;
+  if (cd.length) h += `<section class="catgroup"><h2>Countdowns</h2><div class="ctrs">${cd.map(counterCard).join("")}</div></section>`;
+  if (since.length) h += `<section class="catgroup"><h2>Tage seit</h2><div class="ctrs">${since.map(counterCard).join("")}</div></section>`;
+  return h;
+}
+function counterSheet(id, kind) {
+  const c = id ? S.counters.find(x => x.id === id) : null;
+  if (id && !c) return;
+  let k = c ? c.kind : (kind || "countdown");
+  const draw = () => {
+    sheet(`<h2>${c ? "Bearbeiten" : "Neu"}</h2>
+    <div class="seg" role="group" aria-label="Art"><button type="button" class="chip" data-kind="countdown" aria-pressed="${k === "countdown"}">Countdown bis …</button><button type="button" class="chip" data-kind="since" aria-pressed="${k === "since"}">Tage seit …</button></div>
+    <label class="lbl">Name<input class="field" id="ctName" value="${esc(c ? c.name : ($("#ctName") || {}).value || "")}" placeholder="${k === "since" ? "z. B. Letztes Date, Rauchfrei" : "z. B. Hochzeit, Ferien in Italien"}" autocomplete="off"></label>
+    <label class="lbl">${k === "since" ? "Seit wann" : "Datum"}<input class="field" id="ctDay" type="date" value="${esc(c ? c.day : (k === "since" ? iso(new Date()) : ""))}"></label>
+    ${k === "countdown" ? `<label class="check-row"><input type="checkbox" id="ctYearly"${c && c.yearly ? " checked" : ""}> Jedes Jahr wiederholen (Geburtstag, Jahrestag)</label>` : ""}
+    <div class="actions"><button class="btn grow" id="ctSave">Speichern</button>${c ? `<button class="btn danger" id="ctDel">Löschen</button>` : `<button class="btn ghost" data-act="closeSheet">Abbrechen</button>`}</div>
+    ${c && c.kind === "since" ? `<button class="btn ghost block" id="ctReset">Auf heute zurücksetzen</button>` : ""}`, s => {
+      s.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { if (k !== b.dataset.kind) { k = b.dataset.kind; draw(); } });
+      $("#ctSave", s).onclick = () => {
+        const name = $("#ctName", s).value.trim(), day = $("#ctDay", s).value;
+        if (!name) { $("#ctName", s).focus(); toast("Bitte einen Namen eingeben."); return; }
+        if (!day) { $("#ctDay", s).focus(); toast("Bitte ein Datum wählen."); return; }
+        const yearly = k === "countdown" && !!($("#ctYearly", s) || {}).checked;
+        if (c) write([["counters", "update", { id: c.id, name, kind: k, day, yearly }]]);
+        else write([["counters", "insert", { id: uid(), name, kind: k, day, yearly, record: null, created_at: new Date().toISOString() }]]);
+        closeSheet(); toast(c ? "Gespeichert" : `«${name}» erfasst`);
+      };
+      if (c) $("#ctDel", s).onclick = () => confirmSheet(`«${c.name}» löschen?`, "Der Eintrag wird gelöscht.", "Löschen", () => write([["counters", "delete", { id: c.id }]]));
+      if ($("#ctReset", s)) $("#ctReset", s).onclick = () => resetCounter(c);
+    });
+  };
+  draw();
+}
+function resetCounter(c) {
+  const n = counterInfo(c).n;
+  confirmSheet(`«${c.name}» zurücksetzen?`, `Der Zähler steht bei ${plural(n, "Tag", "Tagen")} und beginnt wieder bei 0.`, "Zurücksetzen", () => {
+    write([["counters", "update", { id: c.id, day: iso(new Date()), record: Math.max(c.record || 0, n) || null }]]);
+    toast(n > (c.record || 0) && n > 0 ? `Neuer Rekord: ${plural(n, "Tag", "Tage")}` : "Zurückgesetzt");
+  });
+}
 function viewMore() {
   const c = cfg() || {};
   const openT = S.todos.filter(t => !t.done), td = iso(new Date());
   const urgent = openT.filter(t => t.due && t.due <= td).length;
   const nextT = [...openT].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"))[0];
   let h = `<button class="navrow" data-act="openTodos"><span class="grow"><b>To-dos</b><small>${openT.length ? (urgent ? `${urgent} heute fällig oder überfällig` : `Als Nächstes: ${esc(nextT.title)}`) : "Keine offenen Aufgaben"}</small></span>${openT.length ? `<span class="count">${openT.length}</span>` : ""}<span aria-hidden="true">›</span></button>
+  ${(() => {
+    const cs = S.counters.map(c => [c, counterInfo(c)]);
+    const up = cs.filter(([c, i]) => c.kind !== "since" && i.n >= 0).sort((a, b) => a[1].n - b[1].n)[0];
+    const sn = cs.filter(([c]) => c.kind === "since")[0];
+    const sub = up ? (up[1].n === 0 ? `${up[0].name}: heute ist es so weit` : `${up[0].name} in ${plural(up[1].n, "Tag", "Tagen")}`) : sn ? `${sn[0].name}: ${plural(sn[1].n, "Tag", "Tage")}` : "Tage bis zur Hochzeit, seit dem letzten Date …";
+    return `<button class="navrow" data-act="openCounters"><span class="grow"><b>Countdowns &amp; Zähler</b><small>${esc(sub)}</small></span>${cs.length ? `<span class="count">${cs.length}</span>` : ""}<span aria-hidden="true">›</span></button>`;
+  })()}
   <div class="panel"><h3>Cloud-Synchronisation</h3>`;
   if (mode === "cloud") {
     h += `<dl class="kv"><dt>Projekt</dt><dd>${esc((c.url || "").replace(/^https:\/\//, ""))}</dd><dt>Status</dt><dd>${session ? "Angemeldet als " + esc(session.user.email) : "Nicht angemeldet"}</dd><dt>Wartend</dt><dd>${outbox.length} Änderungen</dd></dl>`;
@@ -793,16 +948,19 @@ function editItemSheet(id) {
 function recipeEditor(r) {
   const isNew = !r || !r.id;
   r = r || {};
+  let cat = validCat(r.category) || (isNew && CAT[catFilter] ? catFilter : null);
   sheet(`<h2>${isNew ? "Neues Rezept" : "Rezept bearbeiten"}</h2>
   ${r.estimated ? `<div class="banner">Die Mengen hat die AI aus dem Video oder der Beschreibung <b>geschätzt</b>. Bitte kurz prüfen.</div>` : ""}
   <label class="lbl">Titel<input class="field" id="reTitle" value="${esc(r.title || "")}" required></label>
   <div class="row"><label class="lbl" style="width:7em">Portionen<input class="field" id="reServ" type="number" min="1" inputmode="numeric" value="${esc(r.servings || 4)}"></label><label class="lbl" style="width:7em">kcal/Portion<input class="field" id="reKcal" type="number" min="0" inputmode="numeric" value="${esc(r.kcal || "")}"></label></div>
+  ${hasCat() ? `<div class="lbl">Kategorie</div><div class="chips" id="reCat">${CATS.map(c => `<button type="button" class="chip" data-cat="${c.id}" aria-pressed="${c.id === cat}">${esc(c.name)}</button>`).join("")}</div>` : ""}
   <div class="row"><label class="lbl grow">Tags<input class="field" id="reTags" value="${esc((r.tags || []).join(", "))}" placeholder="vegi, schnell, Ofen"></label></div>
   <label class="lbl">Zutaten (eine pro Zeile)<textarea class="field" id="reIng" placeholder="200 g Teigwaren&#10;1 Zwiebel, fein gehackt&#10;2 dl Rahm">${esc((r.ingredients || []).join("\n"))}</textarea></label>
   <label class="lbl">Zubereitung (ein Schritt pro Zeile)<textarea class="field" id="reSteps" style="min-height:160px">${esc((r.steps || []).join("\n"))}</textarea></label>
   <label class="lbl">Notizen<textarea class="field" id="reNotes" style="min-height:70px">${esc(r.notes || "")}</textarea></label>
   <label class="lbl">Quelle (Link)<input class="field" id="reSrc" value="${esc(r.source_url || "")}" inputmode="url"></label>
   <div class="actions"><button class="btn grow" id="reSave">Speichern</button><button class="btn ghost" data-act="closeSheet">Abbrechen</button></div>`, s => {
+    s.querySelectorAll("[data-cat]").forEach(b => b.onclick = () => { cat = cat === b.dataset.cat ? null : b.dataset.cat; s.querySelectorAll("[data-cat]").forEach(x => x.setAttribute("aria-pressed", x.dataset.cat === cat)); });
     $("#reSave", s).onclick = () => {
       const title = $("#reTitle", s).value.trim();
       if (!title) { $("#reTitle", s).focus(); toast("Bitte einen Titel eingeben."); return; }
@@ -812,6 +970,7 @@ function recipeEditor(r) {
         steps: lines($("#reSteps", s).value), notes: $("#reNotes", s).value.trim() || null, source_url: $("#reSrc", s).value.trim() || null,
         image_url: r.image_url || null, created_at: r.created_at || new Date().toISOString(),
         kcal: parseInt($("#reKcal", s).value) || null, rating: r.rating || null };
+      if (hasCat()) row.category = cat || guessCategory(title, row.tags);
       write([["recipes", isNew ? "insert" : "update", row]]);
       closeSheet(); tab = "recipes"; recipeId = row.id; servingsView = null; doneSteps = new Set(); render();
       toast(isNew ? "Rezept gespeichert" : "Änderungen gespeichert");
@@ -938,6 +1097,9 @@ document.addEventListener("click", e => {
     case "backRecipes": recipeId = null; render(); break;
     case "openTodos": moreView = "todos"; render(); window.scrollTo(0, 0); break;
     case "moreBack": moreView = null; render(); break;
+    case "openCounters": moreView = "counters"; render(); window.scrollTo(0, 0); break;
+    case "ctrNew": counterSheet(null); break;
+    case "ctrEdit": counterSheet(id); break;
     case "todoToggle": { const t = S.todos.find(x => x.id === id); if (t) write([["todos", "update", { id, done: !t.done, done_at: t.done ? null : new Date().toISOString() }]]); break; }
     case "todoEdit": todoSheet(id); break;
     case "todoClear": e.preventDefault(); e.stopPropagation(); write(S.todos.filter(t => t.done).map(t => ["todos", "delete", { id: t.id }])); break;
@@ -946,6 +1108,12 @@ document.addEventListener("click", e => {
     case "cookmode": setCookMode(!cookMode); break;
     case "delPhoto": confirmSheet("Foto entfernen?", "Das Foto wird gelöscht.", "Entfernen", () => removePhoto(cur)); break;
     case "sort": recipeSort = a.dataset.k; LS.set("chuchi.sort", recipeSort); render(); break;
+    case "cat": catFilter = a.dataset.k || null; LS.set("chuchi.cat", catFilter); render(); break;
+    case "autoCat": {
+      const todo = S.recipes.filter(r => !validCat(r.category));
+      write(todo.map(r => ["recipes", "update", { id: r.id, category: guessCategory(r.title, r.tags) }]));
+      toast(`${todo.length} zugeordnet. Falsche kannst du im Rezept unter «Bearbeiten» ändern.`); break;
+    }
     case "rate": { const n = +a.dataset.n; write([["recipes", "update", { id: cur.id, rating: cur.rating === n ? null : n }]]); break; }
     case "estimateKcal": estimateKcal(cur, a); break;
     case "sv": servingsView = Math.max(1, (servingsView || cur.servings || 2) + +a.dataset.d); render(); break;
@@ -1033,6 +1201,12 @@ function demoData() {
   const items = [["Milch", 1000, "ml"], ["Rüebli", 500, "g"], ["Bananen", 6, null], ["Zopf", null, null], ["Gruyère", 200, "g"], ["Haferflocken", null, null], ["Toilettenpapier", null, null], ["Olivenöl", null, null]]
     .map(([name, qty, unit]) => ({ id: uid(), name, qty, unit, department: null, checked: false, recipe_title: null, created_at: now }));
   S = { recipes, meal_plan: plan, shopping_items: items, dept_overrides: [], recurring: [], pantry: ["Salz", "Pfeffer", "Olivenöl", "Basmati Reis", "Currypulver"].map(n => ({ id: normName(n), name: n })) };
+  recipes[0].category = "hauptgang"; recipes[1].category = "hauptgang"; recipes[2].category = "fruehstueck";
+  S.counters = [
+    { id: uid(), name: "Ferien im Tessin", kind: "countdown", day: iso(addDays(new Date(), 38)), yearly: false, record: null, created_at: now },
+    { id: uid(), name: "Jahrestag", kind: "countdown", day: iso(addDays(new Date(new Date().getFullYear() - 3, new Date().getMonth(), new Date().getDate()), 120)), yearly: true, record: null, created_at: now },
+    { id: uid(), name: "Letztes Date", kind: "since", day: iso(addDays(new Date(), -9)), yearly: false, record: 21, created_at: now }
+  ];
   S.todos = [{ id: uid(), title: "Entkalker für die Kaffeemaschine kaufen", due: iso(addDays(new Date(), 2)), done: false, done_at: null, created_at: now }, { id: uid(), title: "Kühlschrank abtauen", due: null, done: false, done_at: null, created_at: now }];
   S.recurring = [{ id: uid(), name: "Milch", qty: 2000, unit: "ml", department: "milch", weekday: 6, last_added: null }, { id: uid(), name: "Bananen", qty: 6, unit: null, department: "fruechte", weekday: 6, last_added: null }];
   items.forEach(i => i.department = detectDept(i.name));

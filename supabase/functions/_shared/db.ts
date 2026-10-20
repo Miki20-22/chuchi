@@ -2,10 +2,10 @@
 // Datenbank-Helfer für den Bot (Service-Key, umgeht RLS – nur serverseitig verwenden!)
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 export { detectDept, toBase };
-import { detectDept, parseLine, normName, toBase, fmtQty, setOverrides, DEPTS, DEPT } from "./kitchen.js";
+import { detectDept, parseLine, normName, toBase, fmtQty, setOverrides, DEPTS, DEPT, CAT, guessCategory, validCat } from "./kitchen.js";
 
 export const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
-export { DEPTS, DEPT, fmtQty, parseLine, normName };
+export { DEPTS, DEPT, fmtQty, parseLine, normName, CAT };
 
 function must<T>(r: { data: T; error: any }): T { if (r.error) throw new Error(r.error.message); return r.data; }
 
@@ -47,7 +47,7 @@ export function recipeEntries(r: any, servings?: number) {
 }
 
 export async function saveRecipe(r: any) {
-  const row = { title: r.title, servings: Math.max(1, parseInt(r.servings) || 4), ingredients: r.ingredients || [], steps: r.steps || [], tags: r.tags || [],
+  const row = { title: r.title, category: validCat(r.category) || guessCategory(r.title, r.tags || []), servings: Math.max(1, parseInt(r.servings) || 4), ingredients: r.ingredients || [], steps: r.steps || [], tags: r.tags || [],
     source_url: r.source_url || null, image_url: r.image_url || null, kcal: r.kcal ? Math.round(+r.kcal) || null : null, notes: r.estimated ? "Mengen von der AI geschätzt – bitte prüfen." : (r.notes || null) };
   return must(await db.from("recipes").insert(row).select().single());
 }
@@ -57,7 +57,7 @@ export async function snapshot(today: string) {
   const from = new Date(today); from.setDate(from.getDate() - 7);
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   const [recipes, items, plan] = await Promise.all([
-    db.from("recipes").select("id,title,servings,tags,ingredients,rating,kcal,notes").order("title"),
+    db.from("recipes").select("*").order("title"),
     db.from("shopping_items").select("*").order("created_at"),
     db.from("meal_plan").select("*").gte("day", iso(from)).lte("day", iso(to)).order("day"),
   ]);
@@ -67,7 +67,8 @@ export async function snapshot(today: string) {
   const pantry = ((await db.from("pantry").select("name")).data || []).map((p: any) => p.name);
   const recurring = (await db.from("recurring").select("name,weekday")).data || [];
   const todos = ((await db.from("todos").select("*").eq("done", false)).data || []).sort((x: any, y: any) => (x.due || "9999").localeCompare(y.due || "9999"));
-  return { recipes: must(recipes), items: must(items), plan: must(plan), last, pantry, recurring, todos };
+  const counters = (await db.from("counters").select("*").order("day")).data || []; // fehlt vor Update 5
+  return { recipes: must(recipes), items: must(items), plan: must(plan), last, pantry, recurring, todos, counters };
 }
 
 export function listText(items: any[]) {

@@ -106,6 +106,38 @@ function normName(n) {
   return s;
 }
 function toBase(qty, unit) { if (qty == null) return [null, unit]; const b = BASE[unit]; return b ? [qty * b[1], b[0]] : [qty, unit]; }
+
+// ---------- Rezeptkategorien (auch vom Bot und beim Import verwendet) ----------
+const CATS = [
+  { id: "hauptgang", name: "Hauptgang" },
+  { id: "salat", name: "Salat & Vorspeise" },
+  { id: "suppe", name: "Suppe" },
+  { id: "beilage", name: "Beilage" },
+  { id: "dessert", name: "Dessert" },
+  { id: "backen", name: "Backen & Brot" },
+  { id: "fruehstueck", name: "Frühstück & Brunch" },
+  { id: "apero", name: "Apéro & Snacks" },
+  { id: "getraenk", name: "Getränke" }
+];
+const CAT = Object.fromEntries(CATS.map(c => [c.id, c]));
+// Reihenfolge zählt: «Fruchtsalat» ist Dessert, «Brotsalat» ist Salat, «Kartoffelsalat» ist Salat.
+const CAT_RULES = [
+  ["getraenk", /smoothie|cocktail|mocktail|limonade|sirup|punsch|glühwein|eistee|milchshake|\bshake\b|\blatte\b|\bchai\b|getränk|\bdrink/],
+  ["suppe", /suppe|bouillon|eintopf|minestrone|gazpacho|chowder|\bramen\b|\bpho\b|velouté|\bsoup/],
+  ["dessert", /dessert|mousse|tiramisu|glace|\beis\b|crème brûlée|creme brulee|pudding|panna cotta|parfait|kompott|crumble|meringue|fruchtsalat|sorbet|vermicelles|fondue au chocolat|schokoladenfondue|süssspeise|nachspeise|nachtisch|tiramisù|zabaione|clafoutis/],
+  ["salat", /salat|carpaccio|bruschetta|vorspeise|tatar|ceviche|antipast|\bsalad/],
+  ["fruehstueck", /frühstück|brunch|porridge|müesli|muesli|overnight oats|pancake|omelett|rührei|shakshuka|granola|french toast|birchermüesli|bircher|smoothie bowl|eggs benedict/],
+  ["backen", /kuchen|torte|muffin|cookie|guetzli|brownie|\bcake\b|cupcake|cheesecake|\bbrot\b|zopf|gugelhopf|scones|biscuit|plätzchen|brötchen|weggli|gipfeli|focaccia|baguette|cantuccini|lebkuchen|grittibänz|früchtewähe|apfelwähe|zwetschgenwähe|aprikosenwähe|rhabarberwähe|backen|gebäck|\btarte tatin/],
+  ["apero", /apéro|apero|\bdip\b|hummus|guacamole|tapas|fingerfood|snack|crostini|blätterteigstangen|blätterteigschnecken|käsestangen|tzatziki|aufstrich|antipasti/],
+  ["beilage", /beilage|kartoffelstock|ofenkartoffeln|bratkartoffeln|pommes|rösti\b|kartoffelgratin|ofengemüse|\bpüree\b/]
+];
+/** Kategorie aus Titel und Tags erraten (Standard: Hauptgang) */
+function guessCategory(title, tags) {
+  const t = " " + [title, ...(tags || [])].join(" ").toLowerCase() + " ";
+  for (const [id, re] of CAT_RULES) if (re.test(t)) return id;
+  return "hauptgang";
+}
+const validCat = c => (c && CAT[c]) ? c : null;
 function round(n) { return Math.round(n * 100) / 100; }
 function fmtNum(n) {
   const r = round(n), w = Math.floor(r), f = r - w;
@@ -123,4 +155,4 @@ function fmtQty(qty, unit) {
 }
 
 
-export { DEPTS, DEPT, detectDept, parseLine, normName, toBase, fmtQty, num };
+export { DEPTS, DEPT, detectDept, parseLine, normName, toBase, fmtQty, num, CATS, CAT, guessCategory, validCat };

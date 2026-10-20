@@ -2,7 +2,7 @@
 // Telegram-Bot: Einkaufsliste, Wochenplan, Rezept-Import und Vorschläge per Chat.
 import { gemini, RECIPE_RULES } from "../_shared/gemini.ts";
 import { importRecipe, fromVideo } from "../_shared/importer.ts";
-import { db, addToList, recipeEntries, saveRecipe, snapshot, listText, esc, parseLine, normName, detectDept, toBase } from "../_shared/db.ts";
+import { db, addToList, recipeEntries, saveRecipe, snapshot, listText, esc, parseLine, normName, detectDept, toBase, CAT } from "../_shared/db.ts";
 
 const TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const SECRET = Deno.env.get("TELEGRAM_SECRET") || "";
@@ -19,6 +19,15 @@ const send = (chat_id: number, text: string) =>
 
 const today = () => new Intl.DateTimeFormat("sv-SE", { timeZone: TZ }).format(new Date()); // YYYY-MM-DD
 const wd = (iso: string) => WDL[new Date(iso + "T12:00:00Z").getUTCDay()];
+/** Tage zwischen zwei ISO-Daten (b − a) */
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 864e5);
+function counterLine(c: any, t: string) {
+  if (c.kind === "since") return `${c.name}: Tageszähler seit ${c.day}, steht bei ${Math.max(0, daysBetween(c.day, t))} Tagen${c.record ? ` (Rekord ${c.record})` : ""}`;
+  let target = c.day;
+  if (c.yearly) { const [, m, d] = c.day.split("-"); const y = +t.slice(0, 4); target = `${y}-${m}-${d}` < t ? `${y + 1}-${m}-${d}` : `${y}-${m}-${d}`; }
+  const n = daysBetween(t, target);
+  return `${c.name}: Countdown bis ${target}${c.yearly ? " (jährlich)" : ""}, ${n > 0 ? `noch ${n} Tage` : n === 0 ? "heute" : `vor ${-n} Tagen vorbei`}`;
+}
 const short = (iso: string) => { const [, m, d] = iso.split("-"); return `${+d}.${+m}.`; };
 
 async function remember(chat_id: number, role: string, text: string) {
@@ -60,12 +69,16 @@ Mögliche Actions:
 - {"type":"todo_remove","titles":string[]}      Aufgaben löschen
 - {"type":"pantry_add","names":string[]}        gehört zum Vorrat (immer da, wird bei Rezepten nicht auf die Liste gesetzt)
 - {"type":"pantry_remove","names":string[]}     nicht mehr im Vorrat
+- {"type":"counter_add","name":string,"kind":"countdown"|"since","day":"YYYY-MM-DD","yearly":boolean}   Countdown bis zu einem Datum (z. B. Hochzeit, Ferien; yearly=true für Geburtstag/Jahrestag) oder Tageszähler seit einem Datum (z. B. "letztes Date")
+- {"type":"counter_reset","name":string}       Tageszähler auf heute zurücksetzen (z. B. "wir hatten heute ein Date")
 - {"type":"recurring_add","items":[{"name":string,"qty":number|null,"unit":string|null}],"weekday":1-7}  jede Woche automatisch auf die Liste (1 = Montag … 7 = Sonntag)
-Recipe = {"title":string,"servings":number,"ingredients":string[],"steps":string[],"tags":string[],"kcal":number}
+Recipe = {"title":string,"servings":number,"category":"hauptgang"|"salat"|"suppe"|"beilage"|"dessert"|"backen"|"fruehstueck"|"apero"|"getraenk","ingredients":string[],"steps":string[],"tags":string[],"kcal":number}
 Regeln:
 - Führe nur Actions aus, die der Nutzer wirklich will. Bei "schlag mir was vor" nur Vorschläge im reply, ohne plan-Action, und frag, ob du einplanen sollst. Bestätigt der Nutzer später ("ja", "mach so"), plane gemäss Verlauf.
 - Bevorzuge gut bewertete Rezepte (★4–5) und solche, die länger nicht gekocht wurden ("zuletzt"). Was in den letzten 14 Tagen schon dran war, planst du nur auf Wunsch. Rezepte mit ★1–2 schlägst du nicht vor.
 - Bei Fragen nach Kalorien nutze die kcal-Angaben (pro Portion).
+- Jedes Rezept hat eine Kategorie (Hauptgang, Dessert, Suppe …). Bei "schlag mir ein Dessert vor" usw. nimm Rezepte aus dieser Kategorie. Beim Wochenplan für das Abendessen nimm Hauptgänge, ausser der Nutzer will etwas anderes.
+- Bei Fragen wie "wie lange noch bis …" oder "wie viele Tage seit …" nutze die Countdowns und Zähler (die Tage sind schon ausgerechnet).
 - Aufgaben, die nichts mit Einkaufen zu tun haben ("Velo flicken", "Mama anrufen", "To-do: …", "erinnere mich an …"), gehören auf die To-do-Liste, nicht auf die Einkaufsliste.
 - "X ist leer / aus / fertig" heisst: X mit add_items auf die Liste setzen (auch wenn X im Vorrat ist).
 - Beachte die Notizen zu Rezepten, wenn du sie vorschlägst oder beschreibst.
@@ -81,11 +94,12 @@ async function agent(chat_id: number, text: string) {
   const refs = s.recipes.map((r: any, i: number) => ({ ref: `R${i + 1}`, r }));
   const ctx = [
     `Heute: ${wd(t)}, ${t}`,
-    `Rezeptsammlung:\n${refs.map(({ ref, r }) => `${ref} | ${r.title} | ${r.servings} P. | ${r.rating ? "★" + r.rating : "unbewertet"} | ${r.kcal ? r.kcal + " kcal/P." : "kcal ?"} | zuletzt ${s.last[r.id] || "nie"} | ${(r.tags || []).join(", ")} |${r.notes ? " Notizen: " + String(r.notes).replace(/\n/g, "; ").slice(-120) + " |" : ""} ${(r.ingredients || []).slice(0, 6).map((x: string) => parseLine(x)?.name).join(", ")}`).join("\n") || "(leer)"}`,
+    `Rezeptsammlung:\n${refs.map(({ ref, r }) => `${ref} | ${r.title} | ${CAT[r.category]?.name || "ohne Kategorie"} | ${r.servings} P. | ${r.rating ? "★" + r.rating : "unbewertet"} | ${r.kcal ? r.kcal + " kcal/P." : "kcal ?"} | zuletzt ${s.last[r.id] || "nie"} | ${(r.tags || []).join(", ")} |${r.notes ? " Notizen: " + String(r.notes).replace(/\n/g, "; ").slice(-120) + " |" : ""} ${(r.ingredients || []).slice(0, 6).map((x: string) => parseLine(x)?.name).join(", ")}`).join("\n") || "(leer)"}`,
     `Einkaufsliste (offen): ${s.items.filter((i: any) => !i.checked).map((i: any) => i.name).join(", ") || "(leer)"}`,
     `Vorrat (immer da): ${s.pantry.join(", ") || "(leer)"}`,
     `Jede Woche: ${s.recurring.map((r: any) => `${r.name} (${["", "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][r.weekday]})`).join(", ") || "(nichts)"}`,
     `To-dos (offen): ${s.todos.map((t: any) => t.title + (t.due ? ` (bis ${t.due})` : "")).join("; ") || "(keine)"}`,
+    `Countdowns & Zähler: ${s.counters.map((c: any) => counterLine(c, t)).join("; ") || "(keine)"}`,
     `Abgehakt: ${s.items.filter((i: any) => i.checked).map((i: any) => i.name).join(", ") || "(nichts)"}`,
     `Wochenplan:\n${s.plan.map((p: any) => `${p.day} (${wd(p.day)}): ${s.recipes.find((r: any) => r.id === p.recipe_id)?.title || "?"}, ${p.servings} P.`).join("\n") || "(leer)"}`,
     `Bisheriger Chat:\n${await history(chat_id) || "(neu)"}`,
@@ -160,6 +174,20 @@ async function agent(chat_id: number, text: string) {
         const wd = Math.min(7, Math.max(1, parseInt(a.weekday) || 6));
         const rows = (a.items || []).map((i: any) => { const p = parseLine(`${i.qty ?? ""} ${i.unit ?? ""} ${i.name}`.trim()); if (!p) return null; const [q, u] = toBase(p.qty, p.unit); return { name: p.name.charAt(0).toUpperCase() + p.name.slice(1), qty: q, unit: u, department: detectDept(p.name), weekday: wd }; }).filter(Boolean);
         if (rows.length) { await db.from("recurring").insert(rows); await db.rpc("add_recurring"); done.push(`${rows.length} jede Woche`); }
+      }
+      if (a.type === "counter_add" && a.name && /^\d{4}-\d{2}-\d{2}$/.test(a.day || "")) {
+        const kind = a.kind === "since" ? "since" : "countdown";
+        await db.from("counters").insert({ name: String(a.name), kind, day: a.day, yearly: kind === "countdown" && !!a.yearly });
+        done.push(`«${a.name}» erfasst`);
+      }
+      if (a.type === "counter_reset" && a.name) {
+        const k = String(a.name).toLowerCase();
+        const hit = s.counters.find((c: any) => c.kind === "since" && (c.name.toLowerCase().includes(k) || k.includes(c.name.toLowerCase())));
+        if (hit) {
+          const n = Math.max(0, daysBetween(hit.day, t));
+          await db.from("counters").update({ day: t, record: Math.max(hit.record || 0, n) || null }).eq("id", hit.id);
+          done.push(`«${hit.name}» zurückgesetzt (war ${n} Tage)`);
+        }
       }
       if (a.type === "save_recipe" && a.recipe?.title) { await saveRecipe(a.recipe); done.push(`Rezept «${a.recipe.title}» gespeichert`); }
     } catch (e) { done.push(`Fehler bei ${a.type}: ${e.message}`); }

@@ -1,11 +1,12 @@
 // @ts-nocheck
 // Rezept-Import: strukturierte Daten (schema.org/Recipe) zuerst, AI als Rückfall.
 import { gemini, RECIPE_RULES } from "./gemini.ts";
+import { guessCategory, validCat } from "./kitchen.js";
 
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 export type Recipe = {
-  title: string; servings: number; ingredients: string[]; steps: string[]; tags: string[];
+  title: string; servings: number; category?: string | null; ingredients: string[]; steps: string[]; tags: string[];
   source_url?: string | null; image_url?: string | null; notes?: string | null; estimated?: boolean; kcal?: number | null;
 };
 
@@ -134,6 +135,7 @@ export async function importRecipe(url: string): Promise<Recipe> {
     ingredients: (r.ingredients || []).map((x: any) => String(x).trim()).filter(Boolean),
     steps: (r.steps || []).map((x: any) => String(x).trim()).filter(Boolean),
     tags: (r.tags || []).slice(0, 4),
+    category: validCat(r.category) || guessCategory(String(r.title || ""), r.tags || []),
     image_url: r.image_url || null,
     source_url: url,
     estimated: !!r.estimated,
