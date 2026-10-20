@@ -80,6 +80,8 @@ label.lbl { display: flex; flex-direction: column; gap: 6px; font-size: .82rem; 
 .btn.block { width: 100%; }
 .btn:disabled { opacity: .5; }
 .iconbtn { background: none; border: 0; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--muted); flex: none; }
+.iconbtn.trash { color: var(--warn); border: 1.5px solid currentColor; width: 44px; height: 44px; border-radius: 12px; }
+.iconbtn.trash:disabled { opacity: .35; }
 .iconbtn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .hint { font-size: .85rem; color: var(--muted); }
 
@@ -126,7 +128,7 @@ label.lbl { display: flex; flex-direction: column; gap: 6px; font-size: .82rem; 
 .hero { width: 100%; aspect-ratio: 16 / 10; max-width: 100%; border-radius: var(--r); background: var(--soft) center/cover no-repeat; box-shadow: var(--shadow); }
 .ing .vr { font-size: .72rem; background: var(--soft); color: var(--muted); padding: 1px 7px; border-radius: 99px; margin-left: 6px; white-space: nowrap; }
 .notes { white-space: pre-line; }
-.listtools { display: flex; gap: 8px; flex-wrap: wrap; }
+.listtools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .mini { display: flex; flex-direction: column; background: var(--surface); border-radius: var(--r); overflow: hidden; }
 .mini .mrow { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border-top: 1px solid var(--line); min-height: 50px; }
 .mini .mrow:first-child { border-top: 0; }
@@ -646,7 +648,8 @@ const ICON = {
   back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
   left: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>',
-  plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>'
+  plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 7V4.5h4V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg>'
 };
 
 function render() {
@@ -671,7 +674,7 @@ function render() {
 function viewList() {
   const open = S.shopping_items.filter(i => !i.checked), done = S.shopping_items.filter(i => i.checked);
   let h = `<form class="addbar" data-form="add"><input class="field" id="addInput" placeholder="z. B. 2 l Milch, Rüebli, 500 g Hack" autocomplete="off" enterkeyhint="done" aria-label="Artikel hinzufügen"><button class="btn" type="submit">Hinzufügen</button></form>
-  <div class="listtools"><button class="btn ghost small" data-act="pantry">Vorrat${S.pantry.length ? ` (${S.pantry.length})` : ""}</button><button class="btn ghost small" data-act="recurring">Jede Woche${S.recurring.length ? ` (${S.recurring.length})` : ""}</button></div>`;
+  <div class="listtools"><button class="btn ghost small" data-act="pantry">Vorrat${S.pantry.length ? ` (${S.pantry.length})` : ""}</button><button class="btn ghost small" data-act="recurring">Jede Woche${S.recurring.length ? ` (${S.recurring.length})` : ""}</button><span style="flex:1"></span>${S.shopping_items.length ? `<button class="iconbtn trash" data-act="clearList" aria-label="Ganze Einkaufsliste löschen">${ICON.trash}</button>` : ""}</div>`;
   if (!open.length && !done.length) return h + `<div class="empty"><strong>Die Liste ist leer</strong><span>Tippe oben einen Artikel ein oder füge Zutaten aus einem Rezept hinzu.</span></div>`;
   const groups = {};
   for (const i of open) (groups[i.department in DEPT ? i.department : "sonstiges"] ||= []).push(i);
@@ -752,7 +755,7 @@ function viewWeek() {
       return `<div class="meal"><button class="open" data-act="openRecipe" data-id="${m.recipe_id}">${esc(r ? r.title : (m.note || "Gelöschtes Rezept"))}</button><span class="sv">${m.servings || ""} P.</span><button class="iconbtn" data-act="unplan" data-id="${m.id}" aria-label="Aus dem Plan entfernen">${ICON.x}</button></div>`;
     }).join("") : `<div class="empty-day">Noch nichts geplant</div>`}</div><button class="iconbtn" data-act="planDay" data-day="${k}" aria-label="Rezept für ${WDL[d.getDay()]} einplanen">${ICON.plus}</button></div>`;
   }
-  h += `</div><button class="btn block" data-act="weekToList" ${count ? "" : "disabled"}>Zutaten der Woche auf die Liste</button>
+  h += `</div><div class="row"><button class="btn grow" data-act="weekToList" ${count ? "" : "disabled"}>Zutaten der Woche auf die Liste</button><button class="iconbtn trash" data-act="clearWeek" ${count ? "" : "disabled"} aria-label="Alle Rezepte dieser Woche aus dem Plan entfernen">${ICON.trash}</button></div>
   <p class="hint">Gleiche Zutaten werden zusammengezählt. Vorschläge für die ganze Woche macht der Telegram-Bot: schreib ihm z. B. «Plane nächste Woche, 3× vegetarisch».</p>`;
   return h;
 }
@@ -898,6 +901,7 @@ function viewMore() {
 // ---------- Sheets ----------
 function sheet(html, onMount) {
   const root = $("#sheetRoot");
+  $("#toast").hidden = true;
   root.innerHTML = `<div class="scrim" data-act="closeSheet"><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
   const s = $(".sheet", root);
   onMount && onMount(s);
@@ -1113,6 +1117,17 @@ document.addEventListener("click", e => {
     case "wk": weekStart = addDays(weekStart, +a.dataset.d); render(); break;
     case "planDay": if (!S.recipes.length) { toast("Erfasse zuerst ein Rezept."); break; } pickRecipeSheet(a.dataset.day); break;
     case "unplan": write([["meal_plan", "delete", { id }]]); break;
+    case "clearList": {
+      const all = [...S.shopping_items]; if (!all.length) break;
+      confirmSheet("Ganze Liste löschen?", `Alle ${all.length} Artikel werden von der Einkaufsliste gelöscht, auch die im Wagen.`, "Alles löschen", () => { write(all.map(i => ["shopping_items", "delete", { id: i.id }])); toast("Einkaufsliste geleert"); });
+      break;
+    }
+    case "clearWeek": {
+      const from = iso(weekStart), to = iso(addDays(weekStart, 6));
+      const ws = S.meal_plan.filter(p => p.day >= from && p.day <= to); if (!ws.length) break;
+      confirmSheet(`KW ${isoWeek(weekStart)} leeren?`, `${ws.length === 1 ? "Das geplante Rezept wird" : `Alle ${ws.length} geplanten Rezepte werden`} aus dem Wochenplan vom ${dm(weekStart)} bis ${dm(addDays(weekStart, 6))} entfernt. Die Rezepte selbst bleiben erhalten.`, "Woche leeren", () => { write(ws.map(p => ["meal_plan", "delete", { id: p.id }])); toast("Woche geleert"); });
+      break;
+    }
     case "weekToList": {
       const from = iso(weekStart), to = iso(addDays(weekStart, 6));
       const entries = S.meal_plan.filter(p => p.day >= from && p.day <= to).flatMap(p => { const r = S.recipes.find(x => x.id === p.recipe_id); return r ? recipeEntries(r, p.servings) : []; });
