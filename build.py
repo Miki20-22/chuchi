@@ -39,7 +39,7 @@ a, b = js.index("// ---------- Abteilungen"), js.index("// ---------- Datenhaltu
 shared = ("// Automatisch aus web/app.html erzeugt (python3 build.py). Nicht von Hand ändern.\n"
           "let OVERRIDES = [];\nexport function setOverrides(o) { OVERRIDES = o || []; }\n"
           + js[a:b].replace("S.dept_overrides", "OVERRIDES")
-          + "\nexport { DEPTS, DEPT, detectDept, parseLine, normName, toBase, fmtQty, num, CATS, CAT, guessCategory, validCat };\n")
+          + "\nexport { DEPTS, DEPT, detectDept, parseLine, normName, toBase, fmtQty, num, CATS, CAT, guessCategory, validCat, pantryHas, coreName };\n")
 (ROOT / "supabase/functions/_shared/kitchen.js").write_text(shared, encoding="utf-8")
 
 # 3) Manifest

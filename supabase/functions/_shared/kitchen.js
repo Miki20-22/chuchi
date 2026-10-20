@@ -105,6 +105,23 @@ function normName(n) {
   if (s.length > 4) s = s.replace(/(en|n|e|s)$/, "");
   return s;
 }
+// Vorrat-Vergleich: «wenig Pfeffer», «frisch gemahlener schwarzer Pfeffer», «Mehl zum Bestäuben» zählen als Pfeffer bzw. Mehl.
+const FILLER = /(^|\s)(wenig|etwas|viel|einige|ein paar|evtl\.?|eventuell|optional|nach belieben|frisch|frische[rsn]?|gemahlene[rsn]?|frisch gemahlene[rsn]?|schwarze[rsn]?|weisse[rsn]?|grobe[rsn]?|feine[rsn]?|bio)(?=\s|$)/g;
+const stripEnd = w => w.length > 4 ? w.replace(/(en|n|e|s)$/, "") : w;
+function coreName(n) {
+  let s = String(n).toLowerCase().replace(/\(.*?\)/g, " ").split(",")[0]
+    .replace(/\s+(zum|zur|für|nach|zu|als)\s.*$/, "");
+  for (let i = 0; i < 3; i++) s = s.replace(FILLER, " ");
+  return s.replace(/\s+/g, " ").trim().split(" ").map(stripEnd).join(" ");
+}
+/** ids: Vorrat-IDs (normName). Treffer bei gleichem Namen oder wenn ein Vorrat-Eintrag als ganzes Wort vorkommt. */
+function pantryHas(name, ids) {
+  const list = [...ids]; if (!list.length) return false;
+  const core = coreName(name), n = normName(name);
+  if (list.includes(n) || list.includes(core)) return true;
+  const padded = " " + core + " ";
+  return list.some(id => id && id.length >= 3 && padded.includes(" " + id.split(" ").map(stripEnd).join(" ") + " "));
+}
 function toBase(qty, unit) { if (qty == null) return [null, unit]; const b = BASE[unit]; return b ? [qty * b[1], b[0]] : [qty, unit]; }
 
 // ---------- Rezeptkategorien (auch vom Bot und beim Import verwendet) ----------
@@ -155,4 +172,4 @@ function fmtQty(qty, unit) {
 }
 
 
-export { DEPTS, DEPT, detectDept, parseLine, normName, toBase, fmtQty, num, CATS, CAT, guessCategory, validCat };
+export { DEPTS, DEPT, detectDept, parseLine, normName, toBase, fmtQty, num, CATS, CAT, guessCategory, validCat, pantryHas, coreName };

@@ -22,7 +22,7 @@ AI: Google Gemini Free Tier (`GEMINI_MODEL`, Standard `gemini-flash-latest`).
 
 ## Tabellen
 
-`recipes` (ingredients/steps als JSON-Arrays von Strings, rating 1–5, kcal pro Portion, image_url = URL oder `storage:pfad`, category = id aus `CATS`, Raten mit `guessCategory()`), `shopping_items` (qty in Grundeinheit g/ml), `meal_plan`, `dept_overrides` (gelernte Abteilungen), `pantry` (Vorrat, id = normName), `recurring` (wöchentlich, weekday 1=Mo…7=So, Funktion `add_recurring()` + Cron 04:00 UTC), `todos`, `aliases` (id = normName(Variante) → name; von `_shared/dedupe.ts` per Gemini gelernt, App und Bot fassen damit gleiche Artikel zusammen), `counters` (kind `countdown`/`since`, day, yearly, record = längster Stand vor Reset), `bot_messages`, `bot_updates`.
+`recipes` (ingredients/steps als JSON-Arrays von Strings, rating 1–5, kcal pro Portion, image_url = URL oder `storage:pfad`, category = id aus `CATS`, Raten mit `guessCategory()`), `shopping_items` (qty in Grundeinheit g/ml), `meal_plan`, `dept_overrides` (gelernte Abteilungen), `pantry` (Vorrat, id = normName; Vergleich immer mit `pantryHas()`, das Füllwörter wie «wenig» ignoriert und ganze Wörter findet), `recurring` (wöchentlich, weekday 1=Mo…7=So, Funktion `add_recurring()` + Cron 04:00 UTC), `todos`, `aliases` (id = normName(Variante) → name; von `_shared/dedupe.ts` per Gemini gelernt, App und Bot fassen damit gleiche Artikel zusammen), `counters` (kind `countdown`/`since`, day, yearly, record = längster Stand vor Reset), `bot_messages`, `bot_updates`.
 
 ## Arbeitsweise bei Änderungen
 

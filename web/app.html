@@ -360,6 +360,23 @@ function normName(n) {
   if (s.length > 4) s = s.replace(/(en|n|e|s)$/, "");
   return s;
 }
+// Vorrat-Vergleich: «wenig Pfeffer», «frisch gemahlener schwarzer Pfeffer», «Mehl zum Bestäuben» zählen als Pfeffer bzw. Mehl.
+const FILLER = /(^|\s)(wenig|etwas|viel|einige|ein paar|evtl\.?|eventuell|optional|nach belieben|frisch|frische[rsn]?|gemahlene[rsn]?|frisch gemahlene[rsn]?|schwarze[rsn]?|weisse[rsn]?|grobe[rsn]?|feine[rsn]?|bio)(?=\s|$)/g;
+const stripEnd = w => w.length > 4 ? w.replace(/(en|n|e|s)$/, "") : w;
+function coreName(n) {
+  let s = String(n).toLowerCase().replace(/\(.*?\)/g, " ").split(",")[0]
+    .replace(/\s+(zum|zur|für|nach|zu|als)\s.*$/, "");
+  for (let i = 0; i < 3; i++) s = s.replace(FILLER, " ");
+  return s.replace(/\s+/g, " ").trim().split(" ").map(stripEnd).join(" ");
+}
+/** ids: Vorrat-IDs (normName). Treffer bei gleichem Namen oder wenn ein Vorrat-Eintrag als ganzes Wort vorkommt. */
+function pantryHas(name, ids) {
+  const list = [...ids]; if (!list.length) return false;
+  const core = coreName(name), n = normName(name);
+  if (list.includes(n) || list.includes(core)) return true;
+  const padded = " " + core + " ";
+  return list.some(id => id && id.length >= 3 && padded.includes(" " + id.split(" ").map(stripEnd).join(" ") + " "));
+}
 function toBase(qty, unit) { if (qty == null) return [null, unit]; const b = BASE[unit]; return b ? [qty * b[1], b[0]] : [qty, unit]; }
 
 // ---------- Rezeptkategorien (auch vom Bot und beim Import verwendet) ----------
@@ -534,7 +551,7 @@ function addToList(entries) {
 }
 /** Gelernter Name (z. B. «Bundzwiebeln mit dem Grün» → «Frühlingszwiebeln») */
 const canonName = n => { const a = (S.aliases || []).find(x => x.id === normName(n)); return a ? a.name : n; };
-const inPantry = n => S.pantry.some(p => p.id === normName(n) || p.id === normName(canonName(n)));
+const inPantry = n => { const ids = S.pantry.map(p => p.id); return pantryHas(n, ids) || pantryHas(canonName(n), ids); };
 // Nach dem Hinzufügen fasst die AI gleiche Produkte zusammen (läuft über die Cloud).
 let dedupeT = null, deduping = false;
 function scheduleDedupe() { if (mode !== "cloud" || !session) return; clearTimeout(dedupeT); dedupeT = setTimeout(() => dedupe(false), 2500); }
@@ -743,7 +760,13 @@ function viewRecipe(r) {
   const ing = (r.ingredients || []).map(line => {
     const p = parseLine(line); if (!p) return "";
     const q = p.qty == null ? "" : fmtQty(...toBase(p.qty * f, p.unit));
-    return `<li><span class="q">${esc(q)}</span><span>${esc(p.name)}${p.note ? `, <span class="hint">${esc(p.note)}</span>` : ""}${inPantry(p.name) ? `<span class="vr">Vorrat</span>` : ""}</span></li>`;
+    let nm = p.name, note = p.note;
+    const cn = canonName(p.name);
+    if (normName(cn) !== normName(p.name)) { // gelernter Name, Zusatz wie «mit dem Grün» bleibt als Hinweis
+      const extra = (p.name.match(/\s((?:mit|ohne|für|zum|zur|vom|von|aus|in)\s.+)$/i) || [])[1];
+      nm = cn; note = [extra, p.note].filter(Boolean).join(", ");
+    }
+    return `<li><span class="q">${esc(q)}</span><span>${esc(nm)}${note ? `, <span class="hint">${esc(note)}</span>` : ""}${inPantry(p.name) ? `<span class="vr">Vorrat</span>` : ""}</span></li>`;
   }).join("");
   const next = S.meal_plan.filter(p => p.recipe_id === r.id && p.day > iso(new Date())).sort((a, b) => a.day.localeCompare(b.day))[0];
   return `<div class="row"><button class="btn ghost small" data-act="backRecipes">${"‹"} Alle Rezepte</button></div>

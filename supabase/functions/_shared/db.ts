@@ -2,7 +2,7 @@
 // Datenbank-Helfer für den Bot (Service-Key, umgeht RLS – nur serverseitig verwenden!)
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 export { detectDept, toBase };
-import { detectDept, parseLine, normName, toBase, fmtQty, setOverrides, DEPTS, DEPT, CAT, guessCategory, validCat } from "./kitchen.js";
+import { detectDept, parseLine, normName, toBase, fmtQty, setOverrides, DEPTS, DEPT, CAT, guessCategory, validCat, pantryHas } from "./kitchen.js";
 
 export const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
 export { DEPTS, DEPT, fmtQty, parseLine, normName, CAT };
@@ -22,7 +22,7 @@ export async function addToList(entries: { name: string; qty?: number | null; un
   for (let e of entries) {
     if (!e?.name) continue;
     const orig = e.name; e = { ...e, name: aliases.get(normName(e.name)) || e.name };
-    if (e.from && (pantry.has(normName(e.name)) || pantry.has(normName(orig)))) { skipped++; continue; }
+    if (e.from && (pantryHas(e.name, pantry) || pantryHas(orig, pantry))) { skipped++; continue; }
     const [q, u] = toBase(e.qty ?? null, e.unit ?? null);
     const key = normName(e.name);
     const hit = open.find(i => normName(i.name) === key && ((i.unit || null) === (u || null) || i.qty == null || q == null));
