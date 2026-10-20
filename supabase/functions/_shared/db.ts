@@ -1,6 +1,7 @@
 // @ts-nocheck
 // Datenbank-Helfer für den Bot (Service-Key, umgeht RLS – nur serverseitig verwenden!)
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+export { detectDept, toBase };
 import { detectDept, parseLine, normName, toBase, fmtQty, setOverrides, DEPTS, DEPT } from "./kitchen.js";
 
 export const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
@@ -14,10 +15,12 @@ export async function loadOverrides() { setOverrides(must(await db.from("dept_ov
 export async function addToList(entries: { name: string; qty?: number | null; unit?: string | null; from?: string | null }[]) {
   await loadOverrides();
   const open: any[] = must(await db.from("shopping_items").select("*").eq("checked", false));
-  let added = 0, merged = 0;
+  const pantry = new Set(((await db.from("pantry").select("id")).data || []).map((p: any) => p.id));
+  let added = 0, merged = 0, skipped = 0;
   const inserts: any[] = [], updates = new Map<string, any>();
   for (const e of entries) {
     if (!e?.name) continue;
+    if (e.from && pantry.has(normName(e.name))) { skipped++; continue; }
     const [q, u] = toBase(e.qty ?? null, e.unit ?? null);
     const key = normName(e.name);
     const hit = open.find(i => normName(i.name) === key && ((i.unit || null) === (u || null) || i.qty == null || q == null));
@@ -33,7 +36,7 @@ export async function addToList(entries: { name: string; qty?: number | null; un
   }
   if (inserts.length) must(await db.from("shopping_items").insert(inserts));
   for (const h of updates.values()) must(await db.from("shopping_items").update({ qty: h.qty, unit: h.unit, recipe_title: h.recipe_title }).eq("id", h.id));
-  return { added, merged };
+  return { added, merged, skipped };
 }
 
 export function recipeEntries(r: any, servings?: number) {
@@ -54,14 +57,16 @@ export async function snapshot(today: string) {
   const from = new Date(today); from.setDate(from.getDate() - 7);
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   const [recipes, items, plan] = await Promise.all([
-    db.from("recipes").select("id,title,servings,tags,ingredients,rating,kcal").order("title"),
+    db.from("recipes").select("id,title,servings,tags,ingredients,rating,kcal,notes").order("title"),
     db.from("shopping_items").select("*").order("created_at"),
     db.from("meal_plan").select("*").gte("day", iso(from)).lte("day", iso(to)).order("day"),
   ]);
   const past = must(await db.from("meal_plan").select("recipe_id,day").lte("day", today));
   const last: Record<string, string> = {};
   for (const p of past) if (!last[p.recipe_id] || p.day > last[p.recipe_id]) last[p.recipe_id] = p.day;
-  return { recipes: must(recipes), items: must(items), plan: must(plan), last };
+  const pantry = ((await db.from("pantry").select("name")).data || []).map((p: any) => p.name);
+  const recurring = (await db.from("recurring").select("name,weekday")).data || [];
+  return { recipes: must(recipes), items: must(items), plan: must(plan), last, pantry, recurring };
 }
 
 export function listText(items: any[]) {

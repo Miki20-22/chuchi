@@ -2,7 +2,7 @@
 // Telegram-Bot: Einkaufsliste, Wochenplan, Rezept-Import und Vorschläge per Chat.
 import { gemini, RECIPE_RULES } from "../_shared/gemini.ts";
 import { importRecipe, fromVideo } from "../_shared/importer.ts";
-import { db, addToList, recipeEntries, saveRecipe, snapshot, listText, esc, parseLine, normName } from "../_shared/db.ts";
+import { db, addToList, recipeEntries, saveRecipe, snapshot, listText, esc, parseLine, normName, detectDept, toBase } from "../_shared/db.ts";
 
 const TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const SECRET = Deno.env.get("TELEGRAM_SECRET") || "";
@@ -54,11 +54,17 @@ Mögliche Actions:
 - {"type":"plan_to_list","from":"YYYY-MM-DD","to":"YYYY-MM-DD"}   Zutaten der geplanten Rezepte auf die Liste
 - {"type":"save_recipe","recipe":Recipe}        neues Rezept in die Sammlung
 - {"type":"rate","recipe_ref":"R3","stars":1-5}   Rezept bewerten (z. B. "das Curry war super, 5 Sterne")
+- {"type":"note","recipe_ref":"R3","text":string}  Notiz zu einem Rezept (z. B. "beim Curry nächstes Mal weniger Salz")
+- {"type":"pantry_add","names":string[]}        gehört zum Vorrat (immer da, wird bei Rezepten nicht auf die Liste gesetzt)
+- {"type":"pantry_remove","names":string[]}     nicht mehr im Vorrat
+- {"type":"recurring_add","items":[{"name":string,"qty":number|null,"unit":string|null}],"weekday":1-7}  jede Woche automatisch auf die Liste (1 = Montag … 7 = Sonntag)
 Recipe = {"title":string,"servings":number,"ingredients":string[],"steps":string[],"tags":string[],"kcal":number}
 Regeln:
 - Führe nur Actions aus, die der Nutzer wirklich will. Bei "schlag mir was vor" nur Vorschläge im reply, ohne plan-Action, und frag, ob du einplanen sollst. Bestätigt der Nutzer später ("ja", "mach so"), plane gemäss Verlauf.
 - Bevorzuge gut bewertete Rezepte (★4–5) und solche, die länger nicht gekocht wurden ("zuletzt"). Was in den letzten 14 Tagen schon dran war, planst du nur auf Wunsch. Rezepte mit ★1–2 schlägst du nicht vor.
 - Bei Fragen nach Kalorien nutze die kcal-Angaben (pro Portion).
+- "X ist leer / aus / fertig" heisst: X mit add_items auf die Liste setzen (auch wenn X im Vorrat ist).
+- Beachte die Notizen zu Rezepten, wenn du sie vorschlägst oder beschreibst.
 - Beim Wochenplan: nutze zuerst passende Rezepte aus der Sammlung (recipe_ref), ergänze bei Bedarf eigene Ideen als new_recipe mit vollständigen Zutaten und Schritten. Achte auf Abwechslung und Saison. Standard sind 2 Portionen, ausser der Nutzer sagt etwas anderes.
 - Nach dem Planen biete an, die Zutaten auf die Liste zu setzen (plan_to_list), ausser der Nutzer hat es schon verlangt.
 - Für "heute", "morgen", "nächste Woche" usw. rechne mit dem angegebenen heutigen Datum. Eine Woche beginnt am Montag.
@@ -71,8 +77,10 @@ async function agent(chat_id: number, text: string) {
   const refs = s.recipes.map((r: any, i: number) => ({ ref: `R${i + 1}`, r }));
   const ctx = [
     `Heute: ${wd(t)}, ${t}`,
-    `Rezeptsammlung:\n${refs.map(({ ref, r }) => `${ref} | ${r.title} | ${r.servings} P. | ${r.rating ? "★" + r.rating : "unbewertet"} | ${r.kcal ? r.kcal + " kcal/P." : "kcal ?"} | zuletzt ${s.last[r.id] || "nie"} | ${(r.tags || []).join(", ")} | ${(r.ingredients || []).slice(0, 6).map((x: string) => parseLine(x)?.name).join(", ")}`).join("\n") || "(leer)"}`,
+    `Rezeptsammlung:\n${refs.map(({ ref, r }) => `${ref} | ${r.title} | ${r.servings} P. | ${r.rating ? "★" + r.rating : "unbewertet"} | ${r.kcal ? r.kcal + " kcal/P." : "kcal ?"} | zuletzt ${s.last[r.id] || "nie"} | ${(r.tags || []).join(", ")} |${r.notes ? " Notizen: " + String(r.notes).replace(/\n/g, "; ").slice(-120) + " |" : ""} ${(r.ingredients || []).slice(0, 6).map((x: string) => parseLine(x)?.name).join(", ")}`).join("\n") || "(leer)"}`,
     `Einkaufsliste (offen): ${s.items.filter((i: any) => !i.checked).map((i: any) => i.name).join(", ") || "(leer)"}`,
+    `Vorrat (immer da): ${s.pantry.join(", ") || "(leer)"}`,
+    `Jede Woche: ${s.recurring.map((r: any) => `${r.name} (${["", "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][r.weekday]})`).join(", ") || "(nichts)"}`,
     `Abgehakt: ${s.items.filter((i: any) => i.checked).map((i: any) => i.name).join(", ") || "(nichts)"}`,
     `Wochenplan:\n${s.plan.map((p: any) => `${p.day} (${wd(p.day)}): ${s.recipes.find((r: any) => r.id === p.recipe_id)?.title || "?"}, ${p.servings} P.`).join("\n") || "(leer)"}`,
     `Bisheriger Chat:\n${await history(chat_id) || "(neu)"}`,
@@ -108,12 +116,35 @@ async function agent(chat_id: number, text: string) {
       if (a.type === "plan_to_list") {
         const { data: plan } = await db.from("meal_plan").select("*, recipes(*)").gte("day", a.from).lte("day", a.to);
         const entries = (plan || []).flatMap((p: any) => p.recipes ? recipeEntries(p.recipes, p.servings) : []);
-        const r = await addToList(entries); done.push(`${r.added} neu, ${r.merged} zusammengeführt`);
+        const r = await addToList(entries); done.push(`${r.added} neu, ${r.merged} zusammengeführt` + (r.skipped ? `, ${r.skipped} aus dem Vorrat weggelassen` : ""));
       }
       if (a.type === "rate") {
         const hit = refs.find(x => x.ref === a.recipe_ref);
         const n = Math.min(5, Math.max(1, parseInt(a.stars) || 0));
         if (hit && n) { await db.from("recipes").update({ rating: n }).eq("id", hit.r.id); done.push(`«${hit.r.title}» ${"★".repeat(n)}`); }
+      }
+      if (a.type === "note" && a.text) {
+        const hit = refs.find(x => x.ref === a.recipe_ref);
+        if (hit) {
+          const { data: cur } = await db.from("recipes").select("notes").eq("id", hit.r.id).single();
+          const [y, m, d] = today().split("-");
+          const line = `${+d}.${+m}.${y.slice(2)}: ${a.text}`;
+          await db.from("recipes").update({ notes: cur?.notes ? cur.notes + "\n" + line : line }).eq("id", hit.r.id);
+          done.push(`Notiz bei «${hit.r.title}»`);
+        }
+      }
+      if (a.type === "pantry_add") {
+        const rows = (a.names || []).map((n: string) => ({ id: normName(n), name: n.charAt(0).toUpperCase() + n.slice(1) }));
+        if (rows.length) { await db.from("pantry").upsert(rows); done.push(`${rows.length} im Vorrat`); }
+      }
+      if (a.type === "pantry_remove") {
+        const ids = (a.names || []).map(normName);
+        if (ids.length) { await db.from("pantry").delete().in("id", ids); done.push(`${ids.length} aus dem Vorrat`); }
+      }
+      if (a.type === "recurring_add") {
+        const wd = Math.min(7, Math.max(1, parseInt(a.weekday) || 6));
+        const rows = (a.items || []).map((i: any) => { const p = parseLine(`${i.qty ?? ""} ${i.unit ?? ""} ${i.name}`.trim()); if (!p) return null; const [q, u] = toBase(p.qty, p.unit); return { name: p.name.charAt(0).toUpperCase() + p.name.slice(1), qty: q, unit: u, department: detectDept(p.name), weekday: wd }; }).filter(Boolean);
+        if (rows.length) { await db.from("recurring").insert(rows); await db.rpc("add_recurring"); done.push(`${rows.length} jede Woche`); }
       }
       if (a.type === "save_recipe" && a.recipe?.title) { await saveRecipe(a.recipe); done.push(`Rezept «${a.recipe.title}» gespeichert`); }
     } catch (e) { done.push(`Fehler bei ${a.type}: ${e.message}`); }

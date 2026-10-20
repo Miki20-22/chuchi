@@ -123,6 +123,17 @@ label.lbl { display: flex; flex-direction: column; gap: 6px; font-size: .82rem; 
 .facts b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .sortbar { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
 .sortbar .chip { white-space: nowrap; }
+.hero { width: 100%; aspect-ratio: 16 / 10; max-width: 100%; border-radius: var(--r); background: var(--soft) center/cover no-repeat; box-shadow: var(--shadow); }
+.ing .vr { font-size: .72rem; background: var(--soft); color: var(--muted); padding: 1px 7px; border-radius: 99px; margin-left: 6px; white-space: nowrap; }
+.notes { white-space: pre-line; }
+.listtools { display: flex; gap: 8px; flex-wrap: wrap; }
+.mini { display: flex; flex-direction: column; background: var(--surface); border-radius: var(--r); overflow: hidden; }
+.mini .mrow { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border-top: 1px solid var(--line); min-height: 50px; }
+.mini .mrow:first-child { border-top: 0; }
+.mini .mrow .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mini .mrow small { color: var(--muted); display: block; font-size: .8rem; }
+select.field { appearance: auto; }
+.btn.on { background: var(--hi); color: #1b1b1b; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { font-size: .74rem; background: var(--soft); color: var(--ink); padding: 2px 8px; border-radius: 99px; }
 
@@ -335,8 +346,11 @@ function fmtQty(qty, unit) {
 }
 
 // ---------- Datenhaltung ----------
-const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides"];
-let S = { recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [] };
+const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides", "pantry", "recurring"];
+const OPTIONAL = ["pantry", "recurring"]; // ab Update 3
+const emptyS = () => ({ recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [], pantry: [], recurring: [] });
+const fixS = x => { const e = emptyS(); for (const k in e) if (!Array.isArray(x && x[k])) (x = x || {})[k] = e[k]; return x; };
+let S = emptyS();
 let mode = "demo", sb = null, session = null, channel = null;
 let outbox = LS.get("chuchi.outbox", []);
 const builtIn = () => (window.CHUCHI_CONFIG && /^https:\/\//.test(window.CHUCHI_CONFIG.url || "") && window.CHUCHI_CONFIG.key && !/HIER/.test(window.CHUCHI_CONFIG.key)) ? window.CHUCHI_CONFIG : null;
@@ -382,9 +396,11 @@ async function flush() {
 async function loadCloud() {
   for (const t of T) {
     const { data, error } = await sb.from(t).select("*");
-    if (error) throw error;
+    if (error) { if (OPTIONAL.includes(t)) { S[t] = []; missingTables = true; continue; } throw error; }
     S[t] = data;
   }
+  refreshPhotos();
+  runRecurring();
   for (const o of outbox) applyLocal(o.t, o.op, o.row); // noch nicht gesendete Änderungen behalten
   persist(); render();
 }
@@ -394,10 +410,11 @@ function subscribe() {
     if (!T.includes(p.table)) return;
     if (p.eventType === "DELETE") applyLocal(p.table, "delete", p.old);
     else applyLocal(p.table, "upsert", p.new);
+    if (p.table === "recipes") refreshPhotos();
     persist(); render();
   }).subscribe(st => { live = st === "SUBSCRIBED"; setSync(); });
 }
-let live = false;
+let live = false, missingTables = false;
 function setSync() {
   const el = $("#sync");
   if (mode === "demo") { el.className = "sync"; el.lastChild.textContent = "Demo"; return; }
@@ -409,7 +426,7 @@ async function startCloud() {
   const c = cfg(); if (!c || !window.supabase) return false;
   sb = window.supabase.createClient(c.url, c.key, { auth: { persistSession: true, storageKey: "chuchi.auth" } });
   mode = "cloud";
-  S = LS.get("chuchi.cache", S);
+  S = fixS(LS.get("chuchi.cache", S));
   const { data } = await sb.auth.getSession(); session = data.session;
   sb.auth.onAuthStateChange((_e, s) => { session = s; setSync(); });
   setSync(); render();
@@ -423,10 +440,11 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 // ---------- Einkaufsliste: hinzufügen mit Zusammenführen ----------
 /** entries: [{qty, unit, name, from}] – gleiche Zutaten werden addiert */
 function addToList(entries) {
-  const ops = []; let added = 0, merged = 0;
+  const ops = []; let added = 0, merged = 0, skipped = 0;
   const open = S.shopping_items.filter(i => !i.checked).map(i => ({ ...i }));
   for (const e of entries) {
     if (!e || !e.name) continue;
+    if (e.from && inPantry(e.name)) { skipped++; continue; }
     const [q, u] = toBase(e.qty, e.unit);
     const key = normName(e.name);
     const hit = open.find(i => normName(i.name) === key && ((i.unit || null) === (u || null) || i.qty == null || q == null));
@@ -442,13 +460,92 @@ function addToList(entries) {
     }
   }
   write(ops.map(([t, op, r]) => [t, op, op === "update" ? { id: r.id, qty: r.qty, unit: r.unit, recipe_title: r.recipe_title } : r]));
-  return { added, merged };
+  return { added, merged, skipped };
 }
+const inPantry = n => S.pantry.some(p => p.id === normName(n));
+const listToast = r => toast(`${r.added} neu, ${r.merged} zusammengeführt` + (r.skipped ? `, ${r.skipped} aus dem Vorrat weggelassen` : ""));
 function recipeEntries(r, servings) {
   const f = servings && r.servings ? servings / r.servings : 1;
   return (r.ingredients || []).map(parseLine).filter(Boolean).filter(p => !/^(salz|pfeffer|wasser)(\s+und\s+pfeffer)?$/i.test(p.name))
     .map(p => ({ qty: p.qty == null ? null : p.qty * f, unit: p.unit, name: p.name, from: r.title }));
 }
+
+// ---------- Jede Woche: fällige Artikel auf die Liste ----------
+async function runRecurring() {
+  if (mode === "cloud") { if (session && !missingTables) { try { await sb.rpc("add_recurring"); } catch {} } return; }
+  const t = iso(new Date()), dow = new Date().getDay() || 7, ops = [];
+  for (const r of S.recurring) {
+    if (r.weekday !== dow || (r.last_added && r.last_added >= t)) continue;
+    if (!S.shopping_items.some(i => !i.checked && i.name.toLowerCase() === r.name.toLowerCase()))
+      ops.push(["shopping_items", "insert", { id: uid(), name: r.name, qty: r.qty, unit: r.unit, department: r.department, checked: false, recipe_title: "jede Woche", created_at: new Date().toISOString() }]);
+    ops.push(["recurring", "update", { id: r.id, last_added: t }]);
+  }
+  if (ops.length) write(ops);
+}
+
+// ---------- Fotos (privater Speicher bei Supabase) ----------
+const signed = {};
+function photoUrl(r) {
+  const u = r && r.image_url; if (!u) return null;
+  if (u.startsWith("storage:")) return signed[u.slice(8)] || null;
+  return u;
+}
+async function refreshPhotos() {
+  if (mode !== "cloud" || !session) return;
+  const paths = S.recipes.map(r => r.image_url || "").filter(u => u.startsWith("storage:")).map(u => u.slice(8)).filter(p => !signed[p]);
+  if (!paths.length) return;
+  const { data } = await sb.storage.from("fotos").createSignedUrls(paths, 60 * 60 * 24 * 7);
+  (data || []).forEach(d => { if (d.signedUrl) signed[d.path] = d.signedUrl; });
+  render();
+}
+function shrink(file, max) {
+  return new Promise((ok, bad) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const f = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas"); c.width = Math.round(img.width * f); c.height = Math.round(img.height * f);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(b => b ? ok({ blob: b, canvas: c }) : bad(new Error("Bild konnte nicht gelesen werden")), "image/jpeg", .82);
+    };
+    img.onerror = () => bad(new Error("Bildformat nicht unterstützt"));
+    img.src = url;
+  });
+}
+async function uploadPhoto(r, file) {
+  toast("Foto wird gespeichert…");
+  try {
+    if (mode !== "cloud") {
+      const { canvas } = await shrink(file, 700);
+      write([["recipes", "update", { id: r.id, image_url: canvas.toDataURL("image/jpeg", .75) }]]);
+      toast("Foto gespeichert"); return;
+    }
+    const { blob } = await shrink(file, 1600);
+    const path = `${r.id}/${uid()}.jpg`;
+    const { error } = await sb.storage.from("fotos").upload(path, blob, { contentType: "image/jpeg" });
+    if (error) throw error;
+    const old = r.image_url && r.image_url.startsWith("storage:") ? r.image_url.slice(8) : null;
+    write([["recipes", "update", { id: r.id, image_url: "storage:" + path }]]);
+    if (old) sb.storage.from("fotos").remove([old]);
+    await refreshPhotos(); toast("Foto gespeichert");
+  } catch (e) { toast("Foto nicht gespeichert: " + (e.message || e)); }
+}
+function removePhoto(r) {
+  const old = r.image_url && r.image_url.startsWith("storage:") ? r.image_url.slice(8) : null;
+  write([["recipes", "update", { id: r.id, image_url: null }]]);
+  if (old && sb) sb.storage.from("fotos").remove([old]);
+}
+
+// ---------- Kochmodus: Bildschirm bleibt an ----------
+let wake = null, cookMode = false;
+async function setCookMode(on) {
+  cookMode = on;
+  try {
+    if (on) { if (!("wakeLock" in navigator)) throw new Error(); wake = await navigator.wakeLock.request("screen"); }
+    else if (wake) { await wake.release(); wake = null; }
+  } catch { if (on) { cookMode = false; toast("Dieses Gerät lässt den Bildschirm nicht wach halten."); } }
+  render();
+}
+document.addEventListener("visibilitychange", () => { if (cookMode && document.visibilityState === "visible") navigator.wakeLock.request("screen").then(w => wake = w).catch(() => {}); });
 
 // ---------- Datum ----------
 const WD = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
@@ -485,6 +582,7 @@ const ICON = {
 };
 
 function render() {
+  if (cookMode && !(tab === "recipes" && recipeId)) setCookMode(false);
   document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === tab ? "page" : "false"));
   const open = S.shopping_items.filter(i => !i.checked).length;
   const bd = $("#badge"); bd.hidden = !open; bd.textContent = open;
@@ -504,7 +602,8 @@ function render() {
 
 function viewList() {
   const open = S.shopping_items.filter(i => !i.checked), done = S.shopping_items.filter(i => i.checked);
-  let h = `<form class="addbar" data-form="add"><input class="field" id="addInput" placeholder="z. B. 2 l Milch, Rüebli, 500 g Hack" autocomplete="off" enterkeyhint="done" aria-label="Artikel hinzufügen"><button class="btn" type="submit">Hinzufügen</button></form>`;
+  let h = `<form class="addbar" data-form="add"><input class="field" id="addInput" placeholder="z. B. 2 l Milch, Rüebli, 500 g Hack" autocomplete="off" enterkeyhint="done" aria-label="Artikel hinzufügen"><button class="btn" type="submit">Hinzufügen</button></form>
+  <div class="listtools"><button class="btn ghost small" data-act="pantry">Vorrat${S.pantry.length ? ` (${S.pantry.length})` : ""}</button><button class="btn ghost small" data-act="recurring">Jede Woche${S.recurring.length ? ` (${S.recurring.length})` : ""}</button></div>`;
   if (!open.length && !done.length) return h + `<div class="empty"><strong>Die Liste ist leer</strong><span>Tippe oben einen Artikel ein oder füge Zutaten aus einem Rezept hinzu.</span></div>`;
   const groups = {};
   for (const i of open) (groups[i.department in DEPT ? i.department : "sonstiges"] ||= []).push(i);
@@ -532,7 +631,7 @@ function viewRecipes() {
   <div class="sortbar" role="group" aria-label="Sortierung">${[["az", "A–Z"], ["rating", "Beste zuerst"], ["last", "Lange nicht gekocht"]].map(([k, l]) => `<button class="chip" data-act="sort" data-k="${k}" aria-pressed="${recipeSort === k}">${l}</button>`).join("")}</div>`;
   if (!S.recipes.length) return h + `<div class="empty"><strong>Noch keine Rezepte</strong><span>Erfasse eins von Hand oder importiere es von Fooby, Betty Bossi, Chefkoch und Co.</span></div>`;
   if (!list.length) return h + `<div class="empty"><strong>Nichts gefunden</strong><span>Versuch es mit einer Zutat, z. B. «Kichererbsen».</span></div>`;
-  return h + `<div class="cards">${list.map(r => `<button class="rcard" data-act="openRecipe" data-id="${r.id}"><span class="ph" ${r.image_url ? `style="background-image:url('${esc(r.image_url)}')"` : ""}>${r.image_url ? "" : esc(r.title.charAt(0))}</span><span class="t"><span class="rt">${esc(r.title)}</span><span class="meta">${r.servings || "?"} Portionen${r.kcal ? ` · ≈ ${r.kcal} kcal` : ""}${(r.tags || []).length ? " · " + esc(r.tags.join(", ")) : ""}</span><span class="meta2">${r.rating ? starsTxt(r.rating) : ""}<span>${(() => { const l = lastPlanned(r.id); return l ? "zuletzt " + relDay(l) : "noch nie geplant"; })()}</span></span></span></button>`).join("")}</div>`;
+  return h + `<div class="cards">${list.map(r => `<button class="rcard" data-act="openRecipe" data-id="${r.id}">${(() => { const u = photoUrl(r); return `<span class="ph" ${u ? `style="background-image:url('${esc(u)}')"` : ""}>${u ? "" : esc(r.title.charAt(0))}</span>`; })()}<span class="t"><span class="rt">${esc(r.title)}</span><span class="meta">${r.servings || "?"} Portionen${r.kcal ? ` · ≈ ${r.kcal} kcal` : ""}${(r.tags || []).length ? " · " + esc(r.tags.join(", ")) : ""}</span><span class="meta2">${r.rating ? starsTxt(r.rating) : ""}<span>${(() => { const l = lastPlanned(r.id); return l ? "zuletzt " + relDay(l) : "noch nie geplant"; })()}</span></span></span></button>`).join("")}</div>`;
 }
 
 function viewRecipe(r) {
@@ -541,21 +640,22 @@ function viewRecipe(r) {
   const ing = (r.ingredients || []).map(line => {
     const p = parseLine(line); if (!p) return "";
     const q = p.qty == null ? "" : fmtQty(...toBase(p.qty * f, p.unit));
-    return `<li><span class="q">${esc(q)}</span><span>${esc(p.name)}${p.note ? `, <span class="hint">${esc(p.note)}</span>` : ""}</span></li>`;
+    return `<li><span class="q">${esc(q)}</span><span>${esc(p.name)}${p.note ? `, <span class="hint">${esc(p.note)}</span>` : ""}${inPantry(p.name) ? `<span class="vr">Vorrat</span>` : ""}</span></li>`;
   }).join("");
-  const next = S.meal_plan.filter(p => p.recipe_id === r.id && p.day >= iso(new Date())).sort((a, b) => a.day.localeCompare(b.day))[0];
+  const next = S.meal_plan.filter(p => p.recipe_id === r.id && p.day > iso(new Date())).sort((a, b) => a.day.localeCompare(b.day))[0];
   return `<div class="row"><button class="btn ghost small" data-act="backRecipes">${"‹"} Alle Rezepte</button></div>
   <div class="detail" style="display:flex;flex-direction:column;gap:14px">
+    ${photoUrl(r) ? `<div class="hero" style="background-image:url('${esc(photoUrl(r))}')" role="img" aria-label="Foto von ${esc(r.title)}"></div>` : ""}
     <h2>${esc(r.title)}</h2>
     ${(r.tags || []).length ? `<div class="tags">${r.tags.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>` : ""}
     <div class="rate" role="group" aria-label="Bewertung">${[1, 2, 3, 4, 5].map(n => `<button data-act="rate" data-n="${n}" class="${(r.rating || 0) >= n ? "on" : ""}" aria-label="${n} ${n === 1 ? "Stern" : "Sterne"}">★</button>`).join("")}${r.rating ? "" : `<span class="hint" style="margin-left:6px">Noch nicht bewertet</span>`}</div>
     <div class="facts">${r.kcal ? `<span><b>≈ ${r.kcal} kcal</b> pro Portion</span>` : `<button class="btn ghost small" data-act="estimateKcal">Kalorien schätzen</button>`}${(() => { const l = lastPlanned(r.id); return `<span>Zuletzt geplant: <b>${l ? `${WD[fromIso(l).getDay()]} ${dm(fromIso(l))}` : "noch nie"}</b>${l ? ` (${relDay(l)})` : ""}</span>`; })()}${next ? `<span>Nächstes Mal: <b>${WD[fromIso(next.day).getDay()]} ${dm(fromIso(next.day))}</b></span>` : ""}</div>
-    <div class="actions"><button class="btn" data-act="recipeToList">Auf die Einkaufsliste</button><button class="btn ghost" data-act="planRecipe">Einplanen</button></div>
+    <div class="actions"><button class="btn" data-act="recipeToList">Auf die Einkaufsliste</button><button class="btn ghost" data-act="planRecipe">Einplanen</button><button class="btn ghost${cookMode ? " on" : ""}" data-act="cookmode" aria-pressed="${cookMode}">${cookMode ? "Kochmodus an: Bildschirm bleibt wach" : "Kochmodus"}</button></div>
     <div class="panel"><div class="row"><h3 class="grow">Zutaten</h3><div class="stepper"><button data-act="sv" data-d="-1" aria-label="Weniger Portionen">−</button><span>${sv} Port.</span><button data-act="sv" data-d="1" aria-label="Mehr Portionen">+</button></div></div><ul class="ing">${ing || '<li><span></span><span class="hint">Keine Zutaten erfasst</span></li>'}</ul></div>
     ${(r.steps || []).length ? `<div class="panel"><h3>Zubereitung</h3><ol class="steps">${r.steps.map((s, i) => `<li data-act="step" data-i="${i}" class="${doneSteps.has(i) ? "done" : ""}">${esc(s)}</li>`).join("")}</ol><span class="hint">Tippe auf einen Schritt, um ihn abzuhaken.</span></div>` : ""}
-    ${r.notes ? `<div class="panel"><h3>Notizen</h3><div>${esc(r.notes)}</div></div>` : ""}
+    <div class="panel"><h3>Notizen</h3>${r.notes ? `<div class="notes">${esc(r.notes)}</div>` : `<div class="hint">Noch keine Notizen.</div>`}<form data-form="note" class="addbar"><input class="field" id="noteInput" placeholder="z. B. Nächstes Mal weniger Salz" autocomplete="off" aria-label="Notiz hinzufügen"><button class="btn ghost" type="submit">Notieren</button></form></div>
     ${r.source_url ? `<div class="src">Quelle: <a href="${esc(r.source_url)}" target="_blank" rel="noopener">${esc(r.source_url.replace(/^https?:\/\/(www\.)?/, "").slice(0, 60))}</a></div>` : ""}
-    <div class="actions"><button class="btn ghost" data-act="editRecipe">Bearbeiten</button><button class="btn danger" data-act="delRecipe">Löschen</button></div>
+    <div class="actions"><button class="btn ghost" data-act="editRecipe">Bearbeiten</button><label class="btn ghost" style="cursor:pointer">${r.image_url ? "Foto ändern" : "Foto hinzufügen"}<input type="file" id="photoInput" accept="image/*" hidden></label>${r.image_url ? `<button class="btn ghost" data-act="delPhoto">Foto entfernen</button>` : ""}<button class="btn danger" data-act="delRecipe">Löschen</button></div>
   </div>`;
 }
 
@@ -616,7 +716,8 @@ function editItemSheet(id) {
   sheet(`<h2>Artikel bearbeiten</h2>
   <div class="row"><label class="lbl grow">Name<input class="field" id="eiName" value="${esc(i.name)}"></label><label class="lbl" style="width:8em">Menge<input class="field" id="eiQty" value="${esc(fmtQty(i.qty == null ? null : +i.qty, i.unit))}" placeholder="z. B. 2 dl"></label></div>
   <div class="lbl">Abteilung</div>${deptChips(dep)}
-  <div class="actions"><button class="btn grow" id="eiSave">Speichern</button><button class="btn danger" id="eiDel">Löschen</button></div>`, s => {
+  <div class="actions"><button class="btn grow" id="eiSave">Speichern</button><button class="btn danger" id="eiDel">Löschen</button></div>
+  <div class="actions"><button class="btn ghost small" id="eiPantry">Zum Vorrat (immer da)</button><button class="btn ghost small" id="eiWeekly">Jede Woche auf die Liste</button></div>`, s => {
     s.querySelectorAll("[data-dept]").forEach(b => b.onclick = () => { dep = b.dataset.dept; s.querySelectorAll("[data-dept]").forEach(x => x.setAttribute("aria-pressed", x === b)); });
     $("#eiSave", s).onclick = () => {
       const name = $("#eiName", s).value.trim() || i.name;
@@ -629,6 +730,8 @@ function editItemSheet(id) {
       if (dep !== i.department) toast(`Gemerkt: ${name} → ${DEPT[dep].name}`);
     };
     $("#eiDel", s).onclick = () => { write([["shopping_items", "delete", { id }]]); closeSheet(); };
+    $("#eiPantry", s).onclick = () => { write([["pantry", "upsert", { id: normName(i.name), name: i.name }], ["shopping_items", "delete", { id }]]); closeSheet(); toast(`${i.name} ist jetzt im Vorrat`); };
+    $("#eiWeekly", s).onclick = () => recurringSheet(`${i.qty != null ? fmtQty(+i.qty, i.unit) + " " : ""}${i.name}`);
   });
 }
 
@@ -706,6 +809,45 @@ function planRecipeSheet(r) {
     });
   });
 }
+function pantrySheet() {
+  const rows = [...S.pantry].sort((a, b) => a.name.localeCompare(b.name, "de"));
+  sheet(`<h2>Vorrat</h2>
+  <p class="hint" style="margin:0">Was ihr immer im Haus habt. Beim Übertragen von Rezepten auf die Liste wird es weggelassen. Ist etwas leer, tippe auf «Leer», dann kommt es auf die Liste.</p>
+  <form id="pnForm" class="addbar"><input class="field" id="pnName" placeholder="z. B. Olivenöl, Salz, Reis" autocomplete="off" aria-label="Zum Vorrat hinzufügen"><button class="btn" type="submit">Hinzufügen</button></form>
+  ${missingTables ? `<div class="banner">Für diese Funktion fehlt noch das Datenbank-Update 3.</div>` : ""}
+  ${rows.length ? `<div class="mini">${rows.map(p => `<div class="mrow"><span class="grow">${esc(p.name)}</span><button class="btn ghost small" data-empty="${esc(p.id)}">Leer</button><button class="iconbtn" data-rm="${esc(p.id)}" aria-label="${esc(p.name)} aus dem Vorrat entfernen">${ICON.x}</button></div>`).join("")}</div>` : `<div class="hint">Noch nichts im Vorrat.</div>`}`, s => {
+    $("#pnForm", s).onsubmit = e => {
+      e.preventDefault();
+      const names = $("#pnName", s).value.split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+      if (!names.length) return;
+      write(names.map(n => { const nm = parseLine(n).name; return ["pantry", "upsert", { id: normName(nm), name: nm.charAt(0).toUpperCase() + nm.slice(1) }]; }));
+      pantrySheet();
+    };
+    s.querySelectorAll("[data-empty]").forEach(b => b.onclick = () => { const p = S.pantry.find(x => x.id === b.dataset.empty); addToList([{ name: p.name }]); toast(`${p.name} steht auf der Liste`); });
+    s.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { write([["pantry", "delete", { id: b.dataset.rm }]]); pantrySheet(); });
+  });
+}
+const WDL_ISO = ["", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+function recurringSheet(prefill = "") {
+  const rows = [...S.recurring].sort((a, b) => a.weekday - b.weekday || a.name.localeCompare(b.name, "de"));
+  const lastDay = LS.get("chuchi.weekday", 6);
+  sheet(`<h2>Jede Woche</h2>
+  <p class="hint" style="margin:0">Kommt jede Woche am gewählten Tag automatisch auf die Liste, ausser es steht schon drauf.</p>
+  <form id="rcForm" style="display:flex;flex-direction:column;gap:8px"><input class="field" id="rcName" placeholder="z. B. 1 l Milch" value="${esc(prefill)}" autocomplete="off" aria-label="Artikel"><div class="addbar"><select class="field" id="rcDay" aria-label="Wochentag">${[1, 2, 3, 4, 5, 6, 7].map(d => `<option value="${d}"${d === lastDay ? " selected" : ""}>jeden ${WDL_ISO[d]}</option>`).join("")}</select><button class="btn" type="submit">Hinzufügen</button></div></form>
+  ${missingTables ? `<div class="banner">Für diese Funktion fehlt noch das Datenbank-Update 3.</div>` : ""}
+  ${rows.length ? `<div class="mini">${rows.map(r => `<div class="mrow"><span class="grow">${esc(r.name)}${r.qty != null ? ` · ${esc(fmtQty(+r.qty, r.unit))}` : ""}<small>jeden ${WDL_ISO[r.weekday]}</small></span><button class="iconbtn" data-rm="${r.id}" aria-label="${esc(r.name)} entfernen">${ICON.x}</button></div>`).join("")}</div>` : `<div class="hint">Noch keine wiederkehrenden Artikel.</div>`}`, s => {
+    $("#rcForm", s).onsubmit = e => {
+      e.preventDefault();
+      const p = parseLine($("#rcName", s).value); if (!p) return;
+      const day = +$("#rcDay", s).value; LS.set("chuchi.weekday", day);
+      const [qty, unit] = toBase(p.qty, p.unit);
+      write([["recurring", "insert", { id: uid(), name: p.name.charAt(0).toUpperCase() + p.name.slice(1), qty, unit, department: detectDept(p.name), weekday: day, last_added: null, created_at: new Date().toISOString() }]]);
+      setTimeout(runRecurring, 800);
+      toast(`${p.name}: jeden ${WDL_ISO[day]}`); recurringSheet();
+    };
+    s.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { write([["recurring", "delete", { id: b.dataset.rm }]]); recurringSheet(); });
+  });
+}
 function confirmSheet(title, text, label, fn) {
   sheet(`<h2>${esc(title)}</h2><p style="margin:0">${esc(text)}</p><div class="actions"><button class="btn danger grow" id="cfOk">${esc(label)}</button><button class="btn ghost grow" data-act="closeSheet">Abbrechen</button></div>`, s => { $("#cfOk", s).onclick = () => { closeSheet(); fn(); }; });
 }
@@ -739,12 +881,16 @@ document.addEventListener("click", e => {
     case "importRecipe": importSheet(); break;
     case "openRecipe": tab = "recipes"; recipeId = id; servingsView = null; doneSteps = new Set(); render(); window.scrollTo(0, 0); break;
     case "backRecipes": recipeId = null; render(); break;
+    case "pantry": pantrySheet(); break;
+    case "recurring": recurringSheet(); break;
+    case "cookmode": setCookMode(!cookMode); break;
+    case "delPhoto": confirmSheet("Foto entfernen?", "Das Foto wird gelöscht.", "Entfernen", () => removePhoto(cur)); break;
     case "sort": recipeSort = a.dataset.k; LS.set("chuchi.sort", recipeSort); render(); break;
     case "rate": { const n = +a.dataset.n; write([["recipes", "update", { id: cur.id, rating: cur.rating === n ? null : n }]]); break; }
     case "estimateKcal": estimateKcal(cur, a); break;
     case "sv": servingsView = Math.max(1, (servingsView || cur.servings || 2) + +a.dataset.d); render(); break;
     case "step": { const i = +a.dataset.i; doneSteps.has(i) ? doneSteps.delete(i) : doneSteps.add(i); render(); break; }
-    case "recipeToList": { const r = addToList(recipeEntries(cur, servingsView || cur.servings)); toast(`${r.added} neu, ${r.merged} zusammengeführt`); break; }
+    case "recipeToList": listToast(addToList(recipeEntries(cur, servingsView || cur.servings))); break;
     case "planRecipe": planRecipeSheet(cur); break;
     case "editRecipe": recipeEditor(cur); break;
     case "delRecipe": confirmSheet("Rezept löschen?", `«${cur.title}» wird gelöscht und aus dem Wochenplan entfernt.`, "Löschen", () => { write([["recipes", "delete", { id: cur.id }]]); recipeId = null; render(); toast("Rezept gelöscht"); }); break;
@@ -754,16 +900,19 @@ document.addEventListener("click", e => {
     case "weekToList": {
       const from = iso(weekStart), to = iso(addDays(weekStart, 6));
       const entries = S.meal_plan.filter(p => p.day >= from && p.day <= to).flatMap(p => { const r = S.recipes.find(x => x.id === p.recipe_id); return r ? recipeEntries(r, p.servings) : []; });
-      const r = addToList(entries); toast(`${r.added} neu, ${r.merged} zusammengeführt`); break;
+      listToast(addToList(entries)); break;
     }
     case "resetDemo": confirmSheet("Demo zurücksetzen?", "Alle Demo-Daten in diesem Browser werden durch die Beispiele ersetzt.", "Zurücksetzen", () => { S = demoData(); persist(); render(); }); break;
-    case "logout": sb.auth.signOut().then(() => { session = null; S = { recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [] }; LS.del("chuchi.cache"); render(); setSync(); }); break;
+    case "logout": sb.auth.signOut().then(() => { session = null; S = emptyS(); LS.del("chuchi.cache"); render(); setSync(); }); break;
     case "reload": loadCloud().then(() => toast("Aktualisiert")).catch(err => toast(err.message)); break;
     case "disconnect": confirmSheet("Verbindung trennen?", "Die App wechselt zurück in den Demo-Modus. Eure Daten in der Cloud bleiben erhalten.", "Trennen", () => { LS.del("chuchi.cfg"); location.reload(); }); break;
   }
 });
 document.addEventListener("toggle", e => { if (e.target.matches && e.target.matches("details.cart")) LS.set("chuchi.cartOpen", e.target.open); }, true);
 document.addEventListener("input", e => { if (e.target.id === "search") { query = e.target.value; render(); } });
+document.addEventListener("change", e => {
+  if (e.target.id === "photoInput" && e.target.files && e.target.files[0]) { const r = S.recipes.find(x => x.id === recipeId); if (r) uploadPhoto(r, e.target.files[0]); }
+});
 document.addEventListener("submit", async e => {
   const f = e.target.dataset.form; if (!f) return;
   e.preventDefault();
@@ -773,11 +922,19 @@ document.addEventListener("submit", async e => {
     inp.value = ""; const r = addToList(entries);
     if (r.merged) toast(`${r.merged}× mit bestehendem Artikel zusammengeführt`);
   }
+  if (f === "note") {
+    const r = S.recipes.find(x => x.id === recipeId); const v = $("#noteInput").value.trim();
+    if (!r || !v) return;
+    const d = new Date(), line = `${dm(d)}${String(d.getFullYear()).slice(2)}: ${v}`;
+    $("#noteInput").value = "";
+    write([["recipes", "update", { id: r.id, notes: r.notes ? r.notes + "\n" + line : line }]]);
+    toast("Notiz gespeichert");
+  }
   if (f === "connect") {
     let url = $("#cfgUrl").value.trim().replace(/\/+$/, ""); const key = $("#cfgKey").value.trim();
     if (!/^https:\/\/.+/.test(url)) { toast("Die URL beginnt mit https://"); return; }
     LS.set("chuchi.cfg", { url, key }); LS.del("chuchi.cache");
-    S = { recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [] };
+    S = emptyS();
     if (!(await startCloud())) toast("Verbindung nicht möglich. Prüfe URL und Key.");
   }
   if (f === "login") {
@@ -794,7 +951,7 @@ function demoData() {
     { id: r1, title: "Älplermagronen mit Apfelmus", servings: 4, rating: 5, kcal: 780, tags: ["vegi", "Klassiker"], created_at: now, source_url: null, image_url: null, notes: "Beispielrezept",
       ingredients: ["300 g Hörnli", "400 g Kartoffeln, in Würfeln", "2 Zwiebeln, in Ringen", "2 dl Vollrahm", "1 dl Milch", "150 g Reibkäse", "1 EL Butter", "4 Äpfel", "Salz", "Pfeffer"],
       steps: ["Kartoffeln in Salzwasser 5 Minuten kochen, Hörnli dazugeben und weich kochen.", "Zwiebeln in Butter goldbraun braten.", "Rahm und Milch aufkochen, würzen.", "Teigwaren abgiessen, mit Rahm und Käse mischen, Zwiebeln darüber.", "Äpfel schälen, mit wenig Wasser weich kochen und pürieren."] },
-    { id: r2, title: "Kichererbsen-Curry", servings: 4, rating: 4, kcal: 610, tags: ["vegi", "schnell"], created_at: now, source_url: null, image_url: null, notes: "Beispielrezept",
+    { id: r2, title: "Kichererbsen-Curry", servings: 4, rating: 4, kcal: 610, tags: ["vegi", "schnell"], created_at: now, source_url: null, image_url: null, notes: "Beispielrezept\n13.10.26: Mehr Limette, weniger Curry",
       ingredients: ["1 Zwiebel, fein gehackt", "2 Knoblauchzehen", "1 EL Currypulver", "2 Dosen Kichererbsen", "4 dl Kokosmilch", "200 g Spinat", "250 g Basmati Reis", "1 Limette"],
       steps: ["Zwiebel und Knoblauch andünsten, Curry kurz mitrösten.", "Kichererbsen und Kokosmilch dazugeben, 10 Minuten köcheln.", "Spinat unterrühren, mit Limette abschmecken.", "Mit Reis servieren."] },
     { id: r3, title: "Shakshuka", servings: 2, rating: null, kcal: 520, tags: ["vegi", "Brunch"], created_at: now, source_url: null, image_url: null, notes: "Beispielrezept",
@@ -809,7 +966,8 @@ function demoData() {
   ];
   const items = [["Milch", 1000, "ml"], ["Rüebli", 500, "g"], ["Bananen", 6, null], ["Zopf", null, null], ["Gruyère", 200, "g"], ["Haferflocken", null, null], ["Toilettenpapier", null, null], ["Olivenöl", null, null]]
     .map(([name, qty, unit]) => ({ id: uid(), name, qty, unit, department: null, checked: false, recipe_title: null, created_at: now }));
-  S = { recipes, meal_plan: plan, shopping_items: items, dept_overrides: [] };
+  S = { recipes, meal_plan: plan, shopping_items: items, dept_overrides: [], recurring: [], pantry: ["Salz", "Pfeffer", "Olivenöl", "Basmati Reis", "Currypulver"].map(n => ({ id: normName(n), name: n })) };
+  S.recurring = [{ id: uid(), name: "Milch", qty: 2000, unit: "ml", department: "milch", weekday: 6, last_added: null }, { id: uid(), name: "Bananen", qty: 6, unit: null, department: "fruechte", weekday: 6, last_added: null }];
   items.forEach(i => i.department = detectDept(i.name));
   items[1].checked = true;
   return S;
@@ -819,7 +977,7 @@ function demoData() {
 (async function init() {
   if (!(await startCloud())) {
     const d = LS.get("chuchi.demo", null);
-    S = d && d.recipes ? d : demoData(); persist();
+    S = d && d.recipes ? fixS(d) : demoData(); persist(); runRecurring();
   }
   setSync(); render();
   // PWA: nur wenn manifest.json neben der Seite liegt (gehostete Version)
