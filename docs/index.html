@@ -8,6 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<script src="config.js"></script>
 <title>Chuchichäschtli</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -340,7 +341,8 @@ const T = ["recipes", "shopping_items", "meal_plan", "dept_overrides"];
 let S = { recipes: [], shopping_items: [], meal_plan: [], dept_overrides: [] };
 let mode = "demo", sb = null, session = null, channel = null;
 let outbox = LS.get("chuchi.outbox", []);
-const cfg = () => LS.get("chuchi.cfg", null);
+const builtIn = () => (window.CHUCHI_CONFIG && /^https:\/\//.test(window.CHUCHI_CONFIG.url || "") && window.CHUCHI_CONFIG.key && !/HIER/.test(window.CHUCHI_CONFIG.key)) ? window.CHUCHI_CONFIG : null;
+const cfg = () => LS.get("chuchi.cfg", null) || builtIn();
 
 function applyLocal(t, op, row) {
   const arr = S[t];
@@ -569,7 +571,7 @@ function viewMore() {
     h += `<dl class="kv"><dt>Projekt</dt><dd>${esc((c.url || "").replace(/^https:\/\//, ""))}</dd><dt>Status</dt><dd>${session ? "Angemeldet als " + esc(session.user.email) : "Nicht angemeldet"}</dd><dt>Wartend</dt><dd>${outbox.length} Änderungen</dd></dl>`;
     if (!session) h += `<form data-form="login" style="display:flex;flex-direction:column;gap:10px"><label class="lbl">E-Mail<input class="field" id="lgEmail" type="email" autocomplete="username" required></label><label class="lbl">Passwort<input class="field" id="lgPw" type="password" autocomplete="current-password" required></label><button class="btn" type="submit">Anmelden</button></form>`;
     else h += `<div class="actions"><button class="btn ghost" data-act="reload">Neu laden</button><button class="btn ghost" data-act="logout">Abmelden</button></div>`;
-    h += `<button class="btn danger small" data-act="disconnect" style="align-self:flex-start">Verbindung trennen</button>`;
+    if (LS.get("chuchi.cfg", null)) h += `<button class="btn danger small" data-act="disconnect" style="align-self:flex-start">Verbindung trennen</button>`;
   } else {
     h += `<p class="hint" style="margin:0">Trage die Werte aus Supabase ein (Project Settings → API). Die Anleitung im README erklärt jeden Schritt.</p>
     <form data-form="connect" style="display:flex;flex-direction:column;gap:10px"><label class="lbl">Project URL<input class="field" id="cfgUrl" placeholder="https://abcd1234.supabase.co" required inputmode="url" autocomplete="off"></label><label class="lbl">Anon Key (public)<input class="field" id="cfgKey" placeholder="eyJhbGciOi…" required autocomplete="off"></label><button class="btn" type="submit">Verbinden</button></form>`;
