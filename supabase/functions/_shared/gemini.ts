@@ -39,11 +39,12 @@ export async function gemini(parts: any[], opts: { system?: string; json?: boole
 }
 
 export const RECIPE_RULES = `Gib ein JSON-Objekt zurück:
-{"title": string, "servings": number, "ingredients": string[], "steps": string[], "tags": string[], "estimated": boolean}
+{"title": string, "servings": number, "ingredients": string[], "steps": string[], "tags": string[], "kcal": number, "estimated": boolean}
 Regeln:
 - Alles auf Deutsch (Schweizer Schreibweise: "ss" statt "ß"; Begriffe wie Rahm, Rüebli, Peperoni, Zucchetti sind willkommen). Übersetze bei Bedarf.
 - Jede Zutat als eine Zeile im Format "Menge Einheit Zutat, Hinweis", z. B. "200 g Teigwaren", "1 Zwiebel, fein gehackt", "2 dl Rahm", "1 EL Olivenöl".
 - Nur metrische Einheiten (g, kg, ml, dl, l, EL, TL, Prise, Stk, Bund, Dose). Cups, oz usw. umrechnen.
 - Jeder Arbeitsschritt ein eigener, kurzer Eintrag ohne Nummerierung.
+- kcal: geschätzte Kilokalorien pro Portion (ganze Zahl), aus den Zutatenmengen berechnet.
 - tags: 1–4 kurze Stichworte (z. B. "vegi", "schnell", "Ofen", "Pasta").
 - estimated = true, wenn du Mengen oder Schritte schätzen musstest, weil sie in der Quelle fehlen.`;

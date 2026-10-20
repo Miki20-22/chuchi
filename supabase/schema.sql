@@ -14,8 +14,13 @@ create table if not exists public.recipes (
   source_url  text,
   image_url   text,
   notes       text,
+  rating      int check (rating between 1 and 5),
+  kcal        int,                                  -- pro Portion
   created_at  timestamptz not null default now()
 );
+-- Für Projekte, die vor Version 2 angelegt wurden:
+alter table public.recipes add column if not exists rating int check (rating between 1 and 5);
+alter table public.recipes add column if not exists kcal int;
 
 create table if not exists public.shopping_items (
   id           uuid primary key default gen_random_uuid(),

@@ -53,9 +53,12 @@ Mögliche Actions:
 - {"type":"unplan","days":["YYYY-MM-DD"]}       Plan an diesen Tagen leeren
 - {"type":"plan_to_list","from":"YYYY-MM-DD","to":"YYYY-MM-DD"}   Zutaten der geplanten Rezepte auf die Liste
 - {"type":"save_recipe","recipe":Recipe}        neues Rezept in die Sammlung
-Recipe = {"title":string,"servings":number,"ingredients":string[],"steps":string[],"tags":string[]}
+- {"type":"rate","recipe_ref":"R3","stars":1-5}   Rezept bewerten (z. B. "das Curry war super, 5 Sterne")
+Recipe = {"title":string,"servings":number,"ingredients":string[],"steps":string[],"tags":string[],"kcal":number}
 Regeln:
 - Führe nur Actions aus, die der Nutzer wirklich will. Bei "schlag mir was vor" nur Vorschläge im reply, ohne plan-Action, und frag, ob du einplanen sollst. Bestätigt der Nutzer später ("ja", "mach so"), plane gemäss Verlauf.
+- Bevorzuge gut bewertete Rezepte (★4–5) und solche, die länger nicht gekocht wurden ("zuletzt"). Was in den letzten 14 Tagen schon dran war, planst du nur auf Wunsch. Rezepte mit ★1–2 schlägst du nicht vor.
+- Bei Fragen nach Kalorien nutze die kcal-Angaben (pro Portion).
 - Beim Wochenplan: nutze zuerst passende Rezepte aus der Sammlung (recipe_ref), ergänze bei Bedarf eigene Ideen als new_recipe mit vollständigen Zutaten und Schritten. Achte auf Abwechslung und Saison. Standard sind 2 Portionen, ausser der Nutzer sagt etwas anderes.
 - Nach dem Planen biete an, die Zutaten auf die Liste zu setzen (plan_to_list), ausser der Nutzer hat es schon verlangt.
 - Für "heute", "morgen", "nächste Woche" usw. rechne mit dem angegebenen heutigen Datum. Eine Woche beginnt am Montag.
@@ -68,7 +71,7 @@ async function agent(chat_id: number, text: string) {
   const refs = s.recipes.map((r: any, i: number) => ({ ref: `R${i + 1}`, r }));
   const ctx = [
     `Heute: ${wd(t)}, ${t}`,
-    `Rezeptsammlung:\n${refs.map(({ ref, r }) => `${ref} | ${r.title} | ${r.servings} P. | ${(r.tags || []).join(", ")} | ${(r.ingredients || []).slice(0, 6).map((x: string) => parseLine(x)?.name).join(", ")}`).join("\n") || "(leer)"}`,
+    `Rezeptsammlung:\n${refs.map(({ ref, r }) => `${ref} | ${r.title} | ${r.servings} P. | ${r.rating ? "★" + r.rating : "unbewertet"} | ${r.kcal ? r.kcal + " kcal/P." : "kcal ?"} | zuletzt ${s.last[r.id] || "nie"} | ${(r.tags || []).join(", ")} | ${(r.ingredients || []).slice(0, 6).map((x: string) => parseLine(x)?.name).join(", ")}`).join("\n") || "(leer)"}`,
     `Einkaufsliste (offen): ${s.items.filter((i: any) => !i.checked).map((i: any) => i.name).join(", ") || "(leer)"}`,
     `Abgehakt: ${s.items.filter((i: any) => i.checked).map((i: any) => i.name).join(", ") || "(nichts)"}`,
     `Wochenplan:\n${s.plan.map((p: any) => `${p.day} (${wd(p.day)}): ${s.recipes.find((r: any) => r.id === p.recipe_id)?.title || "?"}, ${p.servings} P.`).join("\n") || "(leer)"}`,
@@ -106,6 +109,11 @@ async function agent(chat_id: number, text: string) {
         const { data: plan } = await db.from("meal_plan").select("*, recipes(*)").gte("day", a.from).lte("day", a.to);
         const entries = (plan || []).flatMap((p: any) => p.recipes ? recipeEntries(p.recipes, p.servings) : []);
         const r = await addToList(entries); done.push(`${r.added} neu, ${r.merged} zusammengeführt`);
+      }
+      if (a.type === "rate") {
+        const hit = refs.find(x => x.ref === a.recipe_ref);
+        const n = Math.min(5, Math.max(1, parseInt(a.stars) || 0));
+        if (hit && n) { await db.from("recipes").update({ rating: n }).eq("id", hit.r.id); done.push(`«${hit.r.title}» ${"★".repeat(n)}`); }
       }
       if (a.type === "save_recipe" && a.recipe?.title) { await saveRecipe(a.recipe); done.push(`Rezept «${a.recipe.title}» gespeichert`); }
     } catch (e) { done.push(`Fehler bei ${a.type}: ${e.message}`); }

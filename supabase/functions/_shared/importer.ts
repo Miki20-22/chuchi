@@ -6,7 +6,7 @@ const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/6
 
 export type Recipe = {
   title: string; servings: number; ingredients: string[]; steps: string[]; tags: string[];
-  source_url?: string | null; image_url?: string | null; notes?: string | null; estimated?: boolean;
+  source_url?: string | null; image_url?: string | null; notes?: string | null; estimated?: boolean; kcal?: number | null;
 };
 
 const entities = (s: string) => s
@@ -45,6 +45,12 @@ function image(i: any): string | null {
   if (Array.isArray(i)) return image(i[0]);
   return i.url || i.contentUrl || null;
 }
+function calories(n: any): number | null {
+  const v = String(n?.calories ?? "");
+  const m = v.replace(",", ".").match(/[\d.]+/); if (!m) return null;
+  const x = parseFloat(m[0]); if (!x) return null;
+  return Math.round(/kj/i.test(v) ? x / 4.184 : x);
+}
 function tags(r: any): string[] {
   const raw = [r.recipeCategory, r.recipeCuisine, r.keywords].flat().filter(Boolean).join(",");
   return [...new Set(raw.split(",").map((s: string) => decode(s)).filter((s: string) => s && s.length < 25))].slice(0, 4);
@@ -58,7 +64,7 @@ function fromJsonLd(html: string): Recipe | null {
     if (!r) continue;
     const ingredients = (r.recipeIngredient || r.ingredients || []).map(decode).filter(Boolean);
     if (!ingredients.length) continue;
-    return { title: decode(r.name || "Rezept"), servings: servings(r.recipeYield), ingredients, steps: steps(r.recipeInstructions), tags: tags(r), image_url: image(r.image) };
+    return { title: decode(r.name || "Rezept"), servings: servings(r.recipeYield), ingredients, steps: steps(r.recipeInstructions), tags: tags(r), image_url: image(r.image), kcal: calories(r.nutrition) };
   }
   return null;
 }
@@ -97,6 +103,15 @@ export async function fromVideo(bytes: Uint8Array, mime = "video/mp4", caption =
   return r;
 }
 
+/** Kalorien pro Portion schätzen */
+export async function estimateKcal(r: { title?: string; servings?: number; ingredients: string[] }): Promise<number> {
+  const out = await gemini([{ text: `Rezept: ${r.title || ""}\nPortionen: ${r.servings || 4}\nZutaten:\n${(r.ingredients || []).join("\n")}` }],
+    { system: 'Schätze die Kilokalorien pro Portion anhand der Zutatenmengen. Gib nur JSON zurück: {"kcal": number}', temperature: 0.2 });
+  const k = Math.round(+out?.kcal);
+  if (!k || k < 20 || k > 5000) throw new Error("Keine sinnvolle Schätzung");
+  return k;
+}
+
 export async function importRecipe(url: string): Promise<Recipe> {
   let u: URL; try { u = new URL(url); } catch { throw new Error("Das ist kein gültiger Link"); }
   const host = u.hostname.replace(/^www\./, "");
@@ -110,7 +125,10 @@ export async function importRecipe(url: string): Promise<Recipe> {
     r = fromJsonLd(html) || await viaAi(decode(html.replace(/<(script|style|nav|footer|header)[\s\S]*?<\/\1>/gi, " ")), "Das ist der Text einer Webseite.");
     if (!r.image_url) r.image_url = (html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)/i) || [])[1] || null;
   }
+  let kcal = r.kcal ? Math.round(+r.kcal) : null;
+  if (!kcal) { try { kcal = await estimateKcal(r); } catch { kcal = null; } }
   return {
+    kcal,
     title: String(r.title || "Rezept").trim(),
     servings: Math.max(1, parseInt(String(r.servings)) || 4),
     ingredients: (r.ingredients || []).map((x: any) => String(x).trim()).filter(Boolean),

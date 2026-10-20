@@ -45,7 +45,7 @@ export function recipeEntries(r: any, servings?: number) {
 
 export async function saveRecipe(r: any) {
   const row = { title: r.title, servings: Math.max(1, parseInt(r.servings) || 4), ingredients: r.ingredients || [], steps: r.steps || [], tags: r.tags || [],
-    source_url: r.source_url || null, image_url: r.image_url || null, notes: r.estimated ? "Mengen von der AI geschätzt – bitte prüfen." : (r.notes || null) };
+    source_url: r.source_url || null, image_url: r.image_url || null, kcal: r.kcal ? Math.round(+r.kcal) || null : null, notes: r.estimated ? "Mengen von der AI geschätzt – bitte prüfen." : (r.notes || null) };
   return must(await db.from("recipes").insert(row).select().single());
 }
 
@@ -54,11 +54,14 @@ export async function snapshot(today: string) {
   const from = new Date(today); from.setDate(from.getDate() - 7);
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   const [recipes, items, plan] = await Promise.all([
-    db.from("recipes").select("id,title,servings,tags,ingredients").order("title"),
+    db.from("recipes").select("id,title,servings,tags,ingredients,rating,kcal").order("title"),
     db.from("shopping_items").select("*").order("created_at"),
     db.from("meal_plan").select("*").gte("day", iso(from)).lte("day", iso(to)).order("day"),
   ]);
-  return { recipes: must(recipes), items: must(items), plan: must(plan) };
+  const past = must(await db.from("meal_plan").select("recipe_id,day").lte("day", today));
+  const last: Record<string, string> = {};
+  for (const p of past) if (!last[p.recipe_id] || p.day > last[p.recipe_id]) last[p.recipe_id] = p.day;
+  return { recipes: must(recipes), items: must(items), plan: must(plan), last };
 }
 
 export function listText(items: any[]) {

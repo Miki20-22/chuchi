@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Wird von der App aufgerufen: { url } -> { recipe } (wird erst nach Prüfung in der App gespeichert)
-import { importRecipe } from "../_shared/importer.ts";
+import { importRecipe, estimateKcal } from "../_shared/importer.ts";
 
 const CORS = {
   "access-control-allow-origin": "*",
@@ -12,7 +12,9 @@ const json = (o: unknown) => new Response(JSON.stringify(o), { headers: { ...COR
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { url } = await req.json();
+    const body = await req.json();
+    if (body.kcal) return json({ kcal: await estimateKcal(body.kcal) });
+    const { url } = body;
     if (!url) return json({ error: "Kein Link angegeben" });
     return json({ recipe: await importRecipe(String(url).trim()) });
   } catch (e) {
